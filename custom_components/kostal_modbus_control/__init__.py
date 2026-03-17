@@ -109,7 +109,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     data = KostalData(handler=handler, inverter_timeout=timeout)
 
     coordinator = KostalCoordinator(hass, handler, data)
-    await coordinator.async_config_entry_first_refresh()
+    # Do first refresh in background — sensors will be unavailable until data arrives
+    # This prevents ConfigEntryNotReady if the inverter is temporarily slow
+    entry.async_create_background_task(
+        hass,
+        coordinator.async_refresh(),
+        "kostal_modbus_initial_refresh",
+    )
     data.coordinator = coordinator
 
     hass.data[DOMAIN][entry.entry_id] = data

@@ -9,7 +9,7 @@
                     "unit_id": "Unit ID",
                     "modbus_timeout": "Modbus Timeout (sec, from Inverter Web UI)"
                 },
-                "description": "Enter connection details for your Kostal Inverter.\n\n**IMPORTANT:** Remember to change **Battery Management** to **\"External via protocol (Modbus TCP)\"** in the battery settings on the Inverter Web UI. (This requires installer code access)."
+                "description": "Enter connection details for your Kostal Inverter.\n\n**IMPORTANT:** Remember to change **Battery Management** to **\"External via protocol (Modbus TCP)\"** in the battery settings on the Inverter Web UI. (This requires installer code access).\n\n**Unit ID** should be **71** for battery management registers on Plenticore inverters."
             }
         },
         "error": {
