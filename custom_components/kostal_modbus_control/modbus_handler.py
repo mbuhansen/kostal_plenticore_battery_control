@@ -29,45 +29,18 @@ class KostalModbusHandler:
                 self._client = None
     
     async def _safe_read(self, address, count):
-        """Invoke read_holding_registers with compatible unit/slave argument."""
-        # Try 'slave' first (v3+ standard) and force count as kwarg just in case
-        try:
-            return await self._client.read_holding_registers(
-                address=address, count=count, slave=self._unit_id
-            )
-        except TypeError:
-            # Fallback to 'unit' (older versions)
-            try:
-                return await self._client.read_holding_registers(
-                    address=address, count=count, unit=self._unit_id
-                )
-            except TypeError:
-                # Fallback to no unit/slave, only address and count
-                try:
-                    return await self._client.read_holding_registers(
-                        address, count=count
-                    )
-                except TypeError:
-                     # Absolute last resort: maybe count is positional really?
-                     # Or maybe method name is different? but error said read_holding_registers
-                     self._logger.error("Could not call read_holding_registers. Signature mismatch.")
-                     raise
+        """Read holding registers using pymodbus 3.6+ API."""
+        self._logger.debug("READ address=%s count=%s slave=%s", address, count, self._unit_id)
+        return await self._client.read_holding_registers(
+            address=address, count=count, slave=self._unit_id
+        )
 
     async def _safe_write(self, address, values):
-        """Invoke write_registers with compatible unit/slave argument."""
-        try:
-            return await self._client.write_registers(
-                address=address, values=values, slave=self._unit_id
-            )
-        except TypeError:
-            try:
-                return await self._client.write_registers(
-                    address=address, values=values, unit=self._unit_id
-                )
-            except TypeError:
-                return await self._client.write_registers(
-                    address=address, values=values
-                )
+        """Write registers using pymodbus 3.6+ API."""
+        self._logger.debug("WRITE address=%s values=%s slave=%s", address, values, self._unit_id)
+        return await self._client.write_registers(
+            address=address, values=values, slave=self._unit_id
+        )
 
     async def read_string(self, address, length):
         """Reads a string from holding registers."""
