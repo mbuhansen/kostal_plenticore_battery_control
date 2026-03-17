@@ -22,7 +22,6 @@ from .const import (
     REG_BATTERY_SOC,
     REG_BATTERY_POWER,
     REG_BATTERY_VOLTAGE,
-    REG_BATTERY_CURRENT,
     REG_BATTERY_TEMP,
     REG_BATTERY_MAX_CHARGE_LIMIT,
     REG_BATTERY_MAX_DISCHARGE_LIMIT,
@@ -51,16 +50,17 @@ class KostalCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self) -> dict:
         try:
             data: dict = {}
+            # Float registers (2 registers each)
             for address in (
                 REG_BATTERY_SOC,
-                REG_BATTERY_POWER,
                 REG_BATTERY_VOLTAGE,
-                REG_BATTERY_CURRENT,
                 REG_BATTERY_TEMP,
                 REG_BATTERY_MAX_CHARGE_LIMIT,
                 REG_BATTERY_MAX_DISCHARGE_LIMIT,
             ):
                 data[address] = await self._handler.read_float(address)
+            # S16 register (1 register, signed int)
+            data[REG_BATTERY_POWER] = await self._handler.read_int16(REG_BATTERY_POWER)
             if (val := data.get(REG_BATTERY_MAX_CHARGE_LIMIT)) is not None:
                 self._kostal_data.current_max_charge_watts = val
             if (val := data.get(REG_BATTERY_MAX_DISCHARGE_LIMIT)) is not None:

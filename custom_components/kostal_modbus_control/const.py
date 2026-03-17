@@ -19,12 +19,10 @@ REG_CHARGE_RATE = 1038            # Battery Charge Rate (Watts) - Positive
 REG_DISCHARGE_RATE = 1040         # Battery Discharge Rate (Watts) - Positive
 
 # Read-Only Registers (Battery Data)
-# Note: Addresses need verification based on specific inverter model (e.g., Plenticore Plus)
-REG_BATTERY_SOC = 210             # Battery State of Charge (%) - Float
-REG_BATTERY_POWER = 216           # Battery Power (W) - Float (Negative=Charge, Positive=Discharge)
-REG_BATTERY_VOLTAGE = 222         # Battery Voltage (V) - Float
-REG_BATTERY_CURRENT = 224         # Battery Current (A) - Float
-REG_BATTERY_TEMP = 230            # Battery Temperature (°C) - Float
+REG_BATTERY_SOC = 210             # Act. state of charge (%) - Float (0xD2)
+REG_BATTERY_TEMP = 214            # Battery Temperature (°C) - Float (0xD6)
+REG_BATTERY_VOLTAGE = 216         # Battery Voltage (V) - Float (0xD8)
+REG_BATTERY_POWER = 582           # Actual battery charge/discharge power (W) - S16, negative=charge
 
 REG_BATTERY_MAX_CHARGE_LIMIT = 1076    # Max Charge Limit (W) - Float
 REG_BATTERY_MAX_DISCHARGE_LIMIT = 1078 # Max Discharge Limit (W) - Float
@@ -33,7 +31,6 @@ REG_BATTERY_MAX_DISCHARGE_LIMIT = 1078 # Max Discharge Limit (W) - Float
 SENSOR_BATTERY_SOC = "battery_soc"
 SENSOR_BATTERY_POWER = "battery_power"
 SENSOR_BATTERY_VOLTAGE = "battery_voltage"
-SENSOR_BATTERY_CURRENT = "battery_current"
 SENSOR_BATTERY_TEMP = "battery_temp"
 SENSOR_BATTERY_MAX_CHARGE_LIMIT = "battery_max_charge_limit"
 SENSOR_BATTERY_MAX_DISCHARGE_LIMIT = "battery_max_discharge_limit"

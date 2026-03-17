@@ -12,7 +12,6 @@ from homeassistant.const import (
     PERCENTAGE,
     UnitOfPower,
     UnitOfElectricPotential,
-    UnitOfElectricCurrent,
     UnitOfTemperature,
 )
 from homeassistant.core import HomeAssistant
@@ -26,14 +25,12 @@ from .const import (
     REG_BATTERY_SOC,
     REG_BATTERY_POWER,
     REG_BATTERY_VOLTAGE,
-    REG_BATTERY_CURRENT,
     REG_BATTERY_TEMP,
     REG_BATTERY_MAX_CHARGE_LIMIT,
     REG_BATTERY_MAX_DISCHARGE_LIMIT,
     SENSOR_BATTERY_SOC,
     SENSOR_BATTERY_POWER,
     SENSOR_BATTERY_VOLTAGE,
-    SENSOR_BATTERY_CURRENT,
     SENSOR_BATTERY_TEMP,
     SENSOR_BATTERY_MAX_CHARGE_LIMIT,
     SENSOR_BATTERY_MAX_DISCHARGE_LIMIT,
@@ -54,7 +51,6 @@ async def async_setup_entry(
         KostalBatterySoCSensor(coordinator, entry.entry_id),
         KostalBatteryPowerSensor(coordinator, entry.entry_id),
         KostalBatteryVoltageSensor(coordinator, entry.entry_id),
-        KostalBatteryCurrentSensor(coordinator, entry.entry_id),
         KostalBatteryTempSensor(coordinator, entry.entry_id),
         KostalBatteryMaxChargeLimitSensor(coordinator, entry.entry_id),
         KostalBatteryMaxDischargeLimitSensor(coordinator, entry.entry_id),
@@ -106,6 +102,14 @@ class KostalBatteryPowerSensor(KostalBaseSensor):
     _attr_native_unit_of_measurement = UnitOfPower.WATT
     _attr_state_class = SensorStateClass.MEASUREMENT
 
+    @property
+    def native_value(self):
+        if self.coordinator.data is None:
+            return None
+        val = self.coordinator.data.get(self._address)
+        return int(val) if val is not None else None
+
+
 class KostalBatteryVoltageSensor(KostalBaseSensor):
     _key = SENSOR_BATTERY_VOLTAGE
     _name = "Battery Voltage"
@@ -114,13 +118,6 @@ class KostalBatteryVoltageSensor(KostalBaseSensor):
     _attr_native_unit_of_measurement = UnitOfElectricPotential.VOLT
     _attr_state_class = SensorStateClass.MEASUREMENT
 
-class KostalBatteryCurrentSensor(KostalBaseSensor):
-    _key = SENSOR_BATTERY_CURRENT
-    _name = "Battery Current"
-    _address = REG_BATTERY_CURRENT
-    _attr_device_class = SensorDeviceClass.CURRENT
-    _attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
-    _attr_state_class = SensorStateClass.MEASUREMENT
 
 class KostalBatteryTempSensor(KostalBaseSensor):
     _key = SENSOR_BATTERY_TEMP

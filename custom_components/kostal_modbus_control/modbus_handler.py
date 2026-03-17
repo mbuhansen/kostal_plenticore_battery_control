@@ -85,22 +85,33 @@ class KostalModbusHandler:
 
     async def read_float(self, address):
         """Reads a float (32-bit) from two 16-bit registers."""
-        # Based on user config 'swap: word', we need Little Endian Word Order.
         await self.connect()
         async with self._lock:
             try:
-                # Use internal safe wrapper
                 result = await self._safe_read(address, 2)
-                
                 if result.isError():
                     self._logger.error(f"Error reading float from {address}: {result}")
                     return None
-                
                 # Big Endian bytes, Little Endian word order: [low_word, high_word]
                 raw = struct.pack(">HH", result.registers[1], result.registers[0])
                 return struct.unpack(">f", raw)[0]
             except Exception as e:
                 self._logger.error(f"Exception reading float from {address}: {e}")
+                return None
+
+    async def read_int16(self, address):
+        """Reads a signed 16-bit integer from one register."""
+        await self.connect()
+        async with self._lock:
+            try:
+                result = await self._safe_read(address, 1)
+                if result.isError():
+                    self._logger.error(f"Error reading int16 from {address}: {result}")
+                    return None
+                raw = struct.pack(">H", result.registers[0])
+                return struct.unpack(">h", raw)[0]
+            except Exception as e:
+                self._logger.error(f"Exception reading int16 from {address}: {e}")
                 return None
 
     async def write_float(self, address, value):
