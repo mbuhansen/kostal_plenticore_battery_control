@@ -36,7 +36,7 @@ class KostalModbusHandler:
             return
         params = inspect.signature(self._client.read_holding_registers).parameters
         self._logger.warning("pymodbus read_holding_registers params: %s", list(params.keys()))
-        for name in ("slave", "unit", "dev_id"):
+        for name in ("slave", "unit", "dev_id", "device_id"):
             if name in params:
                 self._unit_kwarg = name
                 self._logger.warning("Using '%s' as unit_id kwarg", name)
