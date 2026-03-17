@@ -25,6 +25,10 @@ from .const import (
     REG_BATTERY_TEMP,
     REG_BATTERY_MAX_CHARGE_LIMIT,
     REG_BATTERY_MAX_DISCHARGE_LIMIT,
+    REG_CURRENT_PHASE1,
+    REG_CURRENT_PHASE2,
+    REG_CURRENT_PHASE3,
+    REG_SENSOR_TYPE,
 )
 import pymodbus
 
@@ -57,10 +61,15 @@ class KostalCoordinator(DataUpdateCoordinator):
                 REG_BATTERY_TEMP,
                 REG_BATTERY_MAX_CHARGE_LIMIT,
                 REG_BATTERY_MAX_DISCHARGE_LIMIT,
+                REG_CURRENT_PHASE1,
+                REG_CURRENT_PHASE2,
+                REG_CURRENT_PHASE3,
             ):
                 data[address] = await self._handler.read_float(address)
             # S16 register (1 register, signed int)
             data[REG_BATTERY_POWER] = await self._handler.read_int16(REG_BATTERY_POWER)
+            # U8 register (sensor type)
+            data[REG_SENSOR_TYPE] = await self._handler.read_uint8(REG_SENSOR_TYPE)
             if (val := data.get(REG_BATTERY_MAX_CHARGE_LIMIT)) is not None:
                 self._kostal_data.current_max_charge_watts = val
             if (val := data.get(REG_BATTERY_MAX_DISCHARGE_LIMIT)) is not None:

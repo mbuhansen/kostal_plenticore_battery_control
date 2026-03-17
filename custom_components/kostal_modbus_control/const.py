@@ -24,6 +24,20 @@ REG_BATTERY_TEMP = 214            # Battery Temperature (°C) - Float (0xD6)
 REG_BATTERY_VOLTAGE = 216         # Battery Voltage (V) - Float (0xD8)
 REG_BATTERY_POWER = 582           # Actual battery charge/discharge power (W) - S16, negative=charge
 
+# Read-Only Registers (Grid/Powermeter)
+REG_CURRENT_PHASE1 = 222          # Current phase 1 powermeter (A) - Float (0xDE)
+REG_CURRENT_PHASE2 = 232          # Current phase 2 powermeter (A) - Float (0xE8)
+REG_CURRENT_PHASE3 = 242          # Current phase 3 powermeter (A) - Float (0xF2)
+REG_SENSOR_TYPE = 1082            # Installed sensor type - U8 (0x43A)
+
+SENSOR_TYPE_MAP = {
+    0x00: "SDM 630 (B+G E-Tech GmbH)",
+    0x01: "B-Control EM-300 LR (TQ Systems)",
+    0x02: "Reserved",
+    0x03: "KOSTAL Smart Energy Meter (KOSTAL)",
+    0xFF: "No sensor",
+}
+
 REG_BATTERY_MAX_CHARGE_LIMIT = 1076    # Max Charge Limit (W) - Float
 REG_BATTERY_MAX_DISCHARGE_LIMIT = 1078 # Max Discharge Limit (W) - Float
 
@@ -34,6 +48,10 @@ SENSOR_BATTERY_VOLTAGE = "battery_voltage"
 SENSOR_BATTERY_TEMP = "battery_temp"
 SENSOR_BATTERY_MAX_CHARGE_LIMIT = "battery_max_charge_limit"
 SENSOR_BATTERY_MAX_DISCHARGE_LIMIT = "battery_max_discharge_limit"
+SENSOR_CURRENT_PHASE1 = "current_phase1"
+SENSOR_CURRENT_PHASE2 = "current_phase2"
+SENSOR_CURRENT_PHASE3 = "current_phase3"
+SENSOR_SENSOR_TYPE = "sensor_type"
 
 # Default loop interval in seconds (from automation: usually 15s)
 LOOP_INTERVAL = 15

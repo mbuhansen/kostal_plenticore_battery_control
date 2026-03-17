@@ -12,6 +12,7 @@ from homeassistant.const import (
     PERCENTAGE,
     UnitOfPower,
     UnitOfElectricPotential,
+    UnitOfElectricCurrent,
     UnitOfTemperature,
 )
 from homeassistant.core import HomeAssistant
@@ -28,12 +29,21 @@ from .const import (
     REG_BATTERY_TEMP,
     REG_BATTERY_MAX_CHARGE_LIMIT,
     REG_BATTERY_MAX_DISCHARGE_LIMIT,
+    REG_CURRENT_PHASE1,
+    REG_CURRENT_PHASE2,
+    REG_CURRENT_PHASE3,
+    REG_SENSOR_TYPE,
     SENSOR_BATTERY_SOC,
     SENSOR_BATTERY_POWER,
     SENSOR_BATTERY_VOLTAGE,
     SENSOR_BATTERY_TEMP,
     SENSOR_BATTERY_MAX_CHARGE_LIMIT,
     SENSOR_BATTERY_MAX_DISCHARGE_LIMIT,
+    SENSOR_CURRENT_PHASE1,
+    SENSOR_CURRENT_PHASE2,
+    SENSOR_CURRENT_PHASE3,
+    SENSOR_SENSOR_TYPE,
+    SENSOR_TYPE_MAP,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -54,6 +64,10 @@ async def async_setup_entry(
         KostalBatteryTempSensor(coordinator, entry.entry_id),
         KostalBatteryMaxChargeLimitSensor(coordinator, entry.entry_id),
         KostalBatteryMaxDischargeLimitSensor(coordinator, entry.entry_id),
+        KostalCurrentPhase1Sensor(coordinator, entry.entry_id),
+        KostalCurrentPhase2Sensor(coordinator, entry.entry_id),
+        KostalCurrentPhase3Sensor(coordinator, entry.entry_id),
+        KostalSensorTypeSensor(coordinator, entry.entry_id),
     ]
 
     async_add_entities(entities)
@@ -143,3 +157,48 @@ class KostalBatteryMaxDischargeLimitSensor(KostalBaseSensor):
     _attr_device_class = SensorDeviceClass.POWER
     _attr_native_unit_of_measurement = UnitOfPower.WATT
     _attr_state_class = SensorStateClass.MEASUREMENT
+
+
+class KostalCurrentPhase1Sensor(KostalBaseSensor):
+    _key = SENSOR_CURRENT_PHASE1
+    _name = "Grid Current Phase 1"
+    _address = REG_CURRENT_PHASE1
+    _attr_device_class = SensorDeviceClass.CURRENT
+    _attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+
+class KostalCurrentPhase2Sensor(KostalBaseSensor):
+    _key = SENSOR_CURRENT_PHASE2
+    _name = "Grid Current Phase 2"
+    _address = REG_CURRENT_PHASE2
+    _attr_device_class = SensorDeviceClass.CURRENT
+    _attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+
+class KostalCurrentPhase3Sensor(KostalBaseSensor):
+    _key = SENSOR_CURRENT_PHASE3
+    _name = "Grid Current Phase 3"
+    _address = REG_CURRENT_PHASE3
+    _attr_device_class = SensorDeviceClass.CURRENT
+    _attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+
+class KostalSensorTypeSensor(KostalBaseSensor):
+    _key = SENSOR_SENSOR_TYPE
+    _name = "Smart Meter Type"
+    _address = REG_SENSOR_TYPE
+    _attr_device_class = None
+    _attr_native_unit_of_measurement = None
+    _attr_state_class = None
+
+    @property
+    def native_value(self):
+        if self.coordinator.data is None:
+            return None
+        val = self.coordinator.data.get(self._address)
+        if val is None:
+            return None
+        return SENSOR_TYPE_MAP.get(val, f"Unknown (0x{val:02X})")
