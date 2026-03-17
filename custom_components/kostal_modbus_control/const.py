@@ -66,6 +66,7 @@ SWITCH_DISCHARGE_START = "discharge_start"
 SWITCH_BLOCK_CHARGE = "block_charge"
 SWITCH_BLOCK_DISCHARGE = "block_discharge"
 SWITCH_EMS = "ems_grid_protection"
+SWITCH_PREDBAT_CONTROL = "predbat_control"
 
 # Entity descriptions (Numbers/Input Numbers)
 NUMBER_CHARGE_RATE = "charge_rate"

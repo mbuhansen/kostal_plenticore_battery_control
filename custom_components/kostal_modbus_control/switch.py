@@ -13,6 +13,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import (
     DOMAIN,
@@ -25,11 +26,13 @@ from .const import (
     REG_CURRENT_PHASE2,
     REG_CURRENT_PHASE3,
     REG_SENSOR_TYPE,
+    REG_BATTERY_SOC,
     SWITCH_BLOCK_CHARGE,
     SWITCH_CHARGE_START,
     SWITCH_BLOCK_DISCHARGE,
     SWITCH_DISCHARGE_START,
     SWITCH_EMS,
+    SWITCH_PREDBAT_CONTROL,
     EMS_SAFETY_MARGIN,
     EMS_PHASE_VOLTAGE,
     SIGNAL_EMS_STATUS_UPDATED,
@@ -46,12 +49,17 @@ async def async_setup_entry(
     """Set up the Kostal Modbus switches."""
     data = hass.data[DOMAIN][entry.entry_id]
     
+    predbat_switch = KostalPredbatControlSwitch(data, entry.entry_id)
+    charge_start_switch = KostalChargeStartSwitch(data, entry.entry_id, predbat_switch)
+
     entities = [
-        KostalChargeStartSwitch(data, entry.entry_id),
+        charge_start_switch,
         KostalDischargeStartSwitch(data, entry.entry_id),
         KostalBlockDischargeSwitch(data, entry.entry_id),
         KostalBlockChargeSwitch(data, entry.entry_id),
         KostalEMSSwitch(data, entry.entry_id),
+        predbat_switch,
+    ]
     async_add_entities(entities)
 
 class KostalBaseSwitch(SwitchEntity):
@@ -137,24 +145,112 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
     _key = SWITCH_CHARGE_START
     _name = "Charge Start"
 
+    def __init__(self, data, entry_id, predbat_switch=None):
+        super().__init__(data, entry_id)
+        self._predbat_switch = predbat_switch
+        self._predbat_was_charging: bool | None = None
+        self._predbat_transition_time: float | None = None
+        self._predbat_discharge_blocked: bool = False
+
     async def _loop_action(self, *args):
-        # User defined watts
-        user_watts = self._data.charge_rate
-        # Max limit from battery sensor
-        max_limit = self._data.current_max_charge_watts
-        
-        # Clamp to max limit if available (greater than 0)
-        target_watts = user_watts
-        if max_limit > 0:
-            target_watts = min(user_watts, max_limit)
-        
-        # Write negative target watts to 1034 (Charge)
-        val_to_write = -abs(target_watts)
-        await self._data.handler.write_float(REG_POWER_LIMIT_W, val_to_write)
+        if self._predbat_switch is not None and self._predbat_switch.is_on:
+            await self._predbat_loop_action()
+        else:
+            # Predbat Control just turned off — restore discharge if it was blocked
+            if self._predbat_discharge_blocked:
+                self._predbat_discharge_blocked = False
+                self._predbat_was_charging = None
+                self._predbat_transition_time = None
+                await self._data.handler.write_float(REG_DISCHARGE_RATE, self._data.discharge_rate)
+            # Original behavior: write -charge_rate to reg 1034
+            user_watts = self._data.charge_rate
+            max_limit = self._data.current_max_charge_watts
+            target_watts = user_watts
+            if max_limit > 0:
+                target_watts = min(user_watts, max_limit)
+            await self._data.handler.write_float(REG_POWER_LIMIT_W, -abs(target_watts))
+
+    async def _predbat_loop_action(self) -> None:
+        """Predbat-aware loop: charge when predbat_charging is ON, hold SOC floor when OFF."""
+        state = self.hass.states.get("binary_sensor.predbat_charging")
+        is_charging = state is not None and state.state == "on"
+
+        if is_charging:
+            if self._predbat_was_charging is not True:
+                _LOGGER.info("Predbat Control: predbat_charging ON — charging")
+                self._predbat_transition_time = None
+                self._predbat_was_charging = True
+            await self._data.handler.write_float(REG_POWER_LIMIT_W, -abs(self._data.charge_rate))
+            return
+
+        # Not charging
+        if self._predbat_was_charging is True:
+            # Transition: charging just stopped — write 0 and start 45s wait
+            _LOGGER.info("Predbat Control: predbat_charging OFF — waiting 45s before SOC check")
+            await self._data.handler.write_float(REG_POWER_LIMIT_W, 0.0)
+            self._predbat_transition_time = time.time()
+            self._predbat_was_charging = False
+            return
+
+        if self._predbat_was_charging is None:
+            # First tick and already not charging — no transition delay needed
+            self._predbat_was_charging = False
+            self._predbat_transition_time = 0.0
+
+        # Check 45s wait after charge stopped
+        elapsed = time.time() - (self._predbat_transition_time or 0.0)
+        if elapsed < 45:
+            _LOGGER.debug("Predbat Control: %.0fs remaining before SOC check", 45 - elapsed)
+            return
+
+        # SOC check against predbat.best_charge_limit
+        soc = None
+        coordinator = self._data.coordinator
+        if coordinator is not None and coordinator.data is not None:
+            soc = coordinator.data.get(REG_BATTERY_SOC)
+
+        best_limit_state = self.hass.states.get("predbat.best_charge_limit")
+        best_limit = None
+        if best_limit_state is not None:
+            try:
+                best_limit = float(best_limit_state.state)
+            except (ValueError, TypeError):
+                pass
+
+        if soc is None or best_limit is None:
+            _LOGGER.warning(
+                "Predbat Control: SOC=%s best_limit=%s unavailable — skipping",
+                soc, best_limit,
+            )
+            return
+
+        floor = best_limit + 1.0
+        if soc <= floor:
+            # At/below floor — block discharge
+            if not self._predbat_discharge_blocked:
+                _LOGGER.info(
+                    "Predbat Control: SOC=%.1f%% \u2264 floor=%.1f%% — blocking discharge",
+                    soc, floor,
+                )
+                self._predbat_discharge_blocked = True
+            await self._data.handler.write_float(REG_DISCHARGE_RATE, 0.0)
+        else:
+            # Above floor — allow discharge
+            if self._predbat_discharge_blocked:
+                _LOGGER.info(
+                    "Predbat Control: SOC=%.1f%% > floor=%.1f%% — restoring discharge rate",
+                    soc, floor,
+                )
+                self._predbat_discharge_blocked = False
+                await self._data.handler.write_float(REG_DISCHARGE_RATE, self._data.discharge_rate)
 
     async def _stop_action(self):
-        # Write 0 stop charge
         await self._data.handler.write_float(REG_POWER_LIMIT_W, 0.0)
+        if self._predbat_discharge_blocked:
+            self._predbat_discharge_blocked = False
+            await self._data.handler.write_float(REG_DISCHARGE_RATE, self._data.discharge_rate)
+        self._predbat_was_charging = None
+        self._predbat_transition_time = None
 
 class KostalDischargeStartSwitch(KostalBaseSwitch):
     _key = SWITCH_DISCHARGE_START
@@ -288,3 +384,25 @@ class KostalEMSSwitch(KostalBaseSwitch):
             self.hass, f"{SIGNAL_EMS_STATUS_UPDATED}_{self._entry_id}", "inactive"
         )
         await self._data.handler.write_float(REG_POWER_LIMIT_W, 0.0)
+
+
+class KostalPredbatControlSwitch(KostalBaseSwitch, RestoreEntity):
+    """Flag-only switch — enables Predbat-aware mode in KostalChargeStartSwitch."""
+
+    _key = SWITCH_PREDBAT_CONTROL
+    _name = "Predbat Control"
+
+    async def async_added_to_hass(self) -> None:
+        """Restore on/off state after HA restart."""
+        last = await self.async_get_last_state()
+        if last is not None:
+            self._attr_is_on = last.state == "on"
+        self.async_write_ha_state()
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        self._attr_is_on = True
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        self._attr_is_on = False
+        self.async_write_ha_state()
