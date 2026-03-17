@@ -16,7 +16,7 @@ class KostalModbusHandler:
     async def connect(self):
         async with self._lock:
             if not self._client:
-                self._client = AsyncModbusTcpClient(self._host, port=self._port)
+                self._client = AsyncModbusTcpClient(self._host, port=self._port, timeout=10)
             if not self._client.connected:
                 connected = await self._client.connect()
                 if not connected:

@@ -19,9 +19,6 @@ from .const import (
     CONF_MODBUS_TIMEOUT,
     DEFAULT_MODBUS_TIMEOUT,
     LOOP_INTERVAL,
-    REG_MANUFACTURER,
-    REG_MODEL,
-    REG_SERIAL,
     REG_BATTERY_SOC,
     REG_BATTERY_POWER,
     REG_BATTERY_VOLTAGE,
@@ -99,43 +96,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except Exception as err:
         raise ConfigEntryNotReady(f"Cannot connect to Kostal inverter at {host}:{port}") from err
 
-    # Read device info for registry
-    # String 16 -> 8 registers, String 32 -> 16 registers
-    try:
-        manufacturer = await handler.read_string(REG_MANUFACTURER, 8) 
-    except Exception:
-        manufacturer = None
-        
-    if not manufacturer:
-        manufacturer = "Kostal"
-    
-    try:
-        model = await handler.read_string(REG_MODEL, 16)
-    except Exception:
-        model = None
-        
-    if not model:
-         model = "Unknown Model"
-
-    try:
-        serial = await handler.read_string(REG_SERIAL, 8)
-    except Exception:
-        serial = None
-        
-    if not serial:
-         serial = "Unknown Serial"
-
-    _LOGGER.info(f"Discovered Kostal device: {manufacturer} {model} (Serial: {serial})")
-
-    # Register device
+    # Register device with static info (string registers are not reliable via Modbus on all firmware)
     device_registry = dr.async_get(hass)
     device_registry.async_get_or_create(
         config_entry_id=entry.entry_id,
         identifiers={(DOMAIN, entry.entry_id)},
-        manufacturer=manufacturer,
-        model=model,
+        manufacturer="Kostal",
+        model="Plenticore",
         name=f"Kostal Inverter {host}",
-        serial_number=serial,
     )
     
     data = KostalData(handler=handler, inverter_timeout=timeout)
