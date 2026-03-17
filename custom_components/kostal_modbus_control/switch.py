@@ -20,10 +20,17 @@ from .const import (
     REG_POWER_LIMIT_W,
     REG_CHARGE_RATE,
     REG_DISCHARGE_RATE,
+    REG_CURRENT_PHASE1,
+    REG_CURRENT_PHASE2,
+    REG_CURRENT_PHASE3,
+    REG_SENSOR_TYPE,
     SWITCH_BLOCK_CHARGE,
     SWITCH_CHARGE_START,
     SWITCH_BLOCK_DISCHARGE,
     SWITCH_DISCHARGE_START,
+    SWITCH_EMS,
+    EMS_SAFETY_MARGIN,
+    EMS_PHASE_VOLTAGE,
 )
 from .modbus_handler import KostalModbusHandler
 
@@ -42,11 +49,7 @@ async def async_setup_entry(
         KostalDischargeStartSwitch(data, entry.entry_id),
         KostalBlockDischargeSwitch(data, entry.entry_id),
         KostalBlockChargeSwitch(data, entry.entry_id),
-    ]
-    
-    for entity in entities:
-        entity.set_related_switches(entities)
-    
+        KostalEMSSwitch(data, entry.entry_id),
     async_add_entities(entities)
 
 class KostalBaseSwitch(SwitchEntity):
@@ -199,3 +202,71 @@ class KostalBlockChargeSwitch(KostalBaseSwitch):
     async def _stop_action(self):
         # Restore user-configured charge rate when unblocking
         await self._data.handler.write_float(REG_CHARGE_RATE, self._data.charge_rate)
+
+
+class KostalEMSSwitch(KostalBaseSwitch):
+    _key = SWITCH_EMS
+    _name = "EMS Grid Protection"
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Turn on EMS — blocked if no smart meter is detected."""
+        coordinator = self._data.coordinator
+        if coordinator is None or coordinator.data is None:
+            _LOGGER.warning("EMS: Cannot enable — no coordinator data available yet")
+            return
+
+        sensor_type = coordinator.data.get(REG_SENSOR_TYPE)
+        if sensor_type is None or sensor_type == 0xFF:
+            _LOGGER.warning(
+                "EMS: Cannot enable — no smart meter detected (sensor_type=0x%02X)",
+                sensor_type if sensor_type is not None else 0xFF,
+            )
+            return
+
+        await super().async_turn_on(**kwargs)
+
+    async def _loop_action(self, *args) -> None:
+        """Calculate max safe charge power based on grid phase currents."""
+        coordinator = self._data.coordinator
+        if coordinator is None or coordinator.data is None:
+            _LOGGER.warning("EMS: No coordinator data — stopping charge as safety measure")
+            await self._data.handler.write_float(REG_POWER_LIMIT_W, 0.0)
+            return
+
+        data = coordinator.data
+        phase1 = data.get(REG_CURRENT_PHASE1)
+        phase2 = data.get(REG_CURRENT_PHASE2)
+        phase3 = data.get(REG_CURRENT_PHASE3)
+
+        if phase1 is None or phase2 is None or phase3 is None:
+            _LOGGER.warning("EMS: Phase current read failed — stopping charge as safety measure")
+            await self._data.handler.write_float(REG_POWER_LIMIT_W, 0.0)
+            return
+
+        fuse_size = self._data.fuse_size
+        safe_limit_amps = fuse_size * EMS_SAFETY_MARGIN
+
+        # Available headroom per phase in watts (abs() handles bidirectional current)
+        headroom_watts = [
+            (safe_limit_amps - abs(phase1)) * EMS_PHASE_VOLTAGE,
+            (safe_limit_amps - abs(phase2)) * EMS_PHASE_VOLTAGE,
+            (safe_limit_amps - abs(phase3)) * EMS_PHASE_VOLTAGE,
+        ]
+
+        # Most constrained phase limits charge power
+        max_charge_watts = min(headroom_watts)
+
+        # Clamp: 0 minimum (never discharge), user charge rate as maximum
+        target_watts = max(0.0, min(max_charge_watts, self._data.charge_rate))
+
+        _LOGGER.debug(
+            "EMS: phase=%.1f/%.1f/%.1f A, fuse=%sA, headroom=%.0f/%.0f/%.0f W → charge=%.0f W",
+            phase1, phase2, phase3, fuse_size,
+            headroom_watts[0], headroom_watts[1], headroom_watts[2],
+            target_watts,
+        )
+
+        await self._data.handler.write_float(REG_POWER_LIMIT_W, -target_watts)
+
+    async def _stop_action(self) -> None:
+        await self._data.handler.write_float(REG_POWER_LIMIT_W, 0.0)

@@ -14,8 +14,10 @@ from .const import (
     DOMAIN,
     NUMBER_CHARGE_RATE,
     NUMBER_DISCHARGE_RATE,
+    NUMBER_FUSE_SIZE,
     DEFAULT_CHARGE_RATE,
     DEFAULT_DISCHARGE_RATE,
+    DEFAULT_FUSE_SIZE,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -32,6 +34,7 @@ async def async_setup_entry(
     entities = [
         KostalNumber(coordinator, data, entry.entry_id, NUMBER_CHARGE_RATE, "Set Charge Rate", "W"),
         KostalNumber(coordinator, data, entry.entry_id, NUMBER_DISCHARGE_RATE, "Set Discharge Rate", "W"),
+        KostalFuseSizeNumber(data, entry.entry_id),
     ]
 
     async_add_entities(entities)
@@ -93,6 +96,42 @@ class KostalNumber(CoordinatorEntity, RestoreNumber):
     async def async_set_native_value(self, value: float) -> None:
         self._attr_native_value = value
         self._update_data_store(value)
+        self.async_write_ha_state()
+
+
+class KostalFuseSizeNumber(RestoreNumber):
+    """Input for house fuse size in Ampere."""
+
+    _attr_has_entity_name = True
+    _attr_unique_id = None  # Set in __init__
+    _attr_native_min_value = 6.0
+    _attr_native_max_value = 125.0
+    _attr_native_step = 1.0
+    _attr_native_unit_of_measurement = "A"
+    _attr_mode = "box"
+    _attr_name = "House Fuse Size"
+    _attr_icon = "mdi:fuse"
+
+    def __init__(self, data, entry_id: str) -> None:
+        self._data = data
+        self._entry_id = entry_id
+        self._attr_unique_id = f"{entry_id}_{NUMBER_FUSE_SIZE}"
+        self._attr_native_value = DEFAULT_FUSE_SIZE
+        self._data.fuse_size = DEFAULT_FUSE_SIZE
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(identifiers={(DOMAIN, self._entry_id)})
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (state := await self.async_get_last_number_data()) is not None and state.native_value is not None:
+            self._attr_native_value = state.native_value
+            self._data.fuse_size = float(state.native_value)
+
+    async def async_set_native_value(self, value: float) -> None:
+        self._attr_native_value = value
+        self._data.fuse_size = value
         self.async_write_ha_state()
 
         self._update_data_store(value)

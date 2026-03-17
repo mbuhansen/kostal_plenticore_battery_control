@@ -61,12 +61,19 @@ SWITCH_CHARGE_START = "charge_start"
 SWITCH_DISCHARGE_START = "discharge_start"
 SWITCH_BLOCK_CHARGE = "block_charge"
 SWITCH_BLOCK_DISCHARGE = "block_discharge"
+SWITCH_EMS = "ems_grid_protection"
 
 # Entity descriptions (Numbers/Input Numbers)
 NUMBER_CHARGE_RATE = "charge_rate"
 NUMBER_DISCHARGE_RATE = "discharge_rate"
+NUMBER_FUSE_SIZE = "fuse_size"
 
 # Defaults
 DEFAULT_MAX_PERCENT = 100.0
 DEFAULT_CHARGE_RATE = 5000.0
 DEFAULT_DISCHARGE_RATE = 5000.0
+DEFAULT_FUSE_SIZE = 25.0
+
+# EMS settings
+EMS_SAFETY_MARGIN = 0.90   # Trigger at 90% of fuse size
+EMS_PHASE_VOLTAGE = 230.0  # Assumed phase voltage (V)

@@ -87,6 +87,7 @@ class KostalData:
     coordinator: KostalCoordinator | None = None
     charge_rate: float = 5000.0
     discharge_rate: float = 5000.0
+    fuse_size: float = 25.0
     last_stop_time: float = 0.0
     inverter_timeout: int = DEFAULT_MODBUS_TIMEOUT
     current_max_charge_watts: float = 0.0
