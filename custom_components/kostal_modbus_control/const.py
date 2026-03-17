@@ -1,7 +1,6 @@
 """Constants for the Kostal Modbus Control integration."""
 
 DOMAIN = "kostal_modbus_control"
-CONF_HOST = "host"
 CONF_PORT = "port"
 CONF_UNIT_ID = "unit_id"
 CONF_MODBUS_TIMEOUT = "modbus_timeout"  # The configured timeout on the inverter

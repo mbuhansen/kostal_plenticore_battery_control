@@ -1,4 +1,4 @@
-# Kostal Modbus Control for Home Assistant
+# Kostal Plenticore Modbus Control for Home Assistant
 
 This custom integration allows for advanced control of Kostal Plenticore inverters via Modbus TCP. It is specifically designed to control battery charging and discharging behavior "externally," allowing you to force charge from the grid or force discharge based on Home Assistant automations (e.g., electricity prices).
 
@@ -29,7 +29,7 @@ This custom integration allows for advanced control of Kostal Plenticore inverte
 
 1.  Go to **Settings** -> **Devices & Services**.
 2.  Click **Add Integration**.
-3.  Search for **"Kostal Modbus Control"**.
+3.  Search for **"Kostal Plenticore Modbus Control"**.
 4.  Enter your inverter details:
     *   **Host:** IP address of the inverter.
     *   **Port:** Default 1502.

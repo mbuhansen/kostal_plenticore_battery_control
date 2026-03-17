@@ -87,22 +87,24 @@ class KostalBaseSwitch(SwitchEntity):
                 await switch.async_turn_off()
 
         self._attr_is_on = True
-        self.async_write_ha_state() # Update state immediately
-        
-        # Check wait time since last stop
+        self.async_write_ha_state()
+        self.hass.async_create_task(self._start_loop())
+
+    async def _start_loop(self) -> None:
+        """Background task: wait if needed, then start the periodic loop."""
         time_since_last_stop = time.time() - self._data.last_stop_time
         if time_since_last_stop < self._wait_time_before_start:
             sleep_duration = self._wait_time_before_start - time_since_last_stop
             _LOGGER.info(f"Waiting {sleep_duration:.1f}s before starting {self.name} (mandatory delay)")
             await asyncio.sleep(sleep_duration)
+            if not self._attr_is_on:
+                return
 
-        # Run once immediately
         await self._loop_action()
-        
-        # Start timer
-        self._remove_timer = async_track_time_interval(
-            self.hass, self._loop_action, timedelta(seconds=self._loop_interval)
-        )
+        if self._attr_is_on:
+            self._remove_timer = async_track_time_interval(
+                self.hass, self._loop_action, timedelta(seconds=self._loop_interval)
+            )
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the switch off."""
@@ -182,7 +184,8 @@ class KostalBlockDischargeSwitch(KostalBaseSwitch):
         await self._data.handler.write_float(REG_DISCHARGE_RATE, 0.0)
 
     async def _stop_action(self):
-        pass
+        # Restore user-configured discharge rate when unblocking
+        await self._data.handler.write_float(REG_DISCHARGE_RATE, self._data.discharge_rate)
 
 class KostalBlockChargeSwitch(KostalBaseSwitch):
     _key = SWITCH_BLOCK_CHARGE
@@ -194,4 +197,5 @@ class KostalBlockChargeSwitch(KostalBaseSwitch):
         await self._data.handler.write_float(REG_CHARGE_RATE, 0.0)
 
     async def _stop_action(self):
-        pass
+        # Restore user-configured charge rate when unblocking
+        await self._data.handler.write_float(REG_CHARGE_RATE, self._data.charge_rate)

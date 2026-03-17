@@ -2,7 +2,7 @@
     "config": {
         "step": {
             "user": {
-                "title": "Kostal Modbus Configuration",
+                "title": "Kostal Plenticore Modbus Control",
                 "data": {
                     "host": "IP Address of Inverter",
                     "port": "Port",
@@ -11,6 +11,9 @@
                 },
                 "description": "Enter connection details for your Kostal Inverter.\n\n**IMPORTANT:** Remember to change **Battery Management** to **\"External via protocol (Modbus TCP)\"** in the battery settings on the Inverter Web UI. (This requires installer code access)."
             }
+        },
+        "error": {
+            "cannot_connect": "Unable to connect to the inverter. Check IP address, port, and Unit ID."
         },
         "abort": {
             "already_configured": "Device is already configured"

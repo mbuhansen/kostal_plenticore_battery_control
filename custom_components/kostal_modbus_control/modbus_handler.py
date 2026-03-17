@@ -2,22 +2,9 @@ import logging
 import struct
 import asyncio
 
-# Attempt to handle pymodbus imports gracefully
-try:
-    from pymodbus.client import AsyncModbusTcpClient
-    from pymodbus.payload import BinaryPayloadBuilder, BinaryPayloadDecoder
-    from pymodbus.constants import Endian
-except ImportError:
-    # Older versions might not have 'payload' in global namespace or have moved it
-    # This is a fallback attempt or just to prevent initial load crash
-    try:
-        from pymodbus.client.sync import ModbusTcpClient as AsyncModbusTcpClient # Fallback dummy or wrong
-        # No good fallback for payload if missing completely
-        BinaryPayloadBuilder = None
-        BinaryPayloadDecoder = None
-        Endian = None
-    except ImportError:
-        pass
+from pymodbus.client import AsyncModbusTcpClient
+from pymodbus.payload import BinaryPayloadBuilder, BinaryPayloadDecoder
+from pymodbus.constants import Endian
 
 class KostalModbusHandler:
     def __init__(self, host, port, unit_id):
@@ -33,7 +20,9 @@ class KostalModbusHandler:
             if not self._client:
                 self._client = AsyncModbusTcpClient(self._host, port=self._port)
             if not self._client.connected:
-                await self._client.connect()
+                connected = await self._client.connect()
+                if not connected:
+                    raise ConnectionError(f"Failed to connect to Modbus host {self._host}:{self._port}")
 
     async def close(self):
         async with self._lock:
@@ -43,40 +32,43 @@ class KostalModbusHandler:
     
     async def _safe_read(self, address, count):
         """Invoke read_holding_registers with compatible unit/slave argument."""
-        # Try 'slave' first (v3+ standard)
+        # Try 'slave' first (v3+ standard) and force count as kwarg just in case
         try:
             return await self._client.read_holding_registers(
-                address, count, slave=self._unit_id
+                address=address, count=count, slave=self._unit_id
             )
         except TypeError:
             # Fallback to 'unit' (older versions)
             try:
                 return await self._client.read_holding_registers(
-                    address, count, unit=self._unit_id
+                    address=address, count=count, unit=self._unit_id
                 )
             except TypeError:
-                # Fallback to no argument (defaults to 1 or 0 usually)
-                # Warning: This might send to wrong unit if device is strict
-                self._logger.warning("Could not pass slave/unit ID to read_holding_registers. Using default.")
-                return await self._client.read_holding_registers(
-                    address, count
-                )
+                # Fallback to no unit/slave, only address and count
+                try:
+                    return await self._client.read_holding_registers(
+                        address, count=count
+                    )
+                except TypeError:
+                     # Absolute last resort: maybe count is positional really?
+                     # Or maybe method name is different? but error said read_holding_registers
+                     self._logger.error("Could not call read_holding_registers. Signature mismatch.")
+                     raise
 
     async def _safe_write(self, address, values):
         """Invoke write_registers with compatible unit/slave argument."""
         try:
             return await self._client.write_registers(
-                address, values, slave=self._unit_id
+                address=address, values=values, slave=self._unit_id
             )
         except TypeError:
             try:
                 return await self._client.write_registers(
-                    address, values, unit=self._unit_id
+                    address=address, values=values, unit=self._unit_id
                 )
             except TypeError:
-                self._logger.warning("Could not pass slave/unit ID to write_registers. Using default.")
                 return await self._client.write_registers(
-                    address, values
+                    address=address, values=values
                 )
 
     async def read_string(self, address, length):

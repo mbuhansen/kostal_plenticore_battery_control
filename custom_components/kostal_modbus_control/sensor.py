@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from homeassistant.components.sensor import (
     SensorEntity,
@@ -19,7 +18,9 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from . import KostalCoordinator
 from .const import (
     DOMAIN,
     REG_BATTERY_SOC,
@@ -47,27 +48,27 @@ async def async_setup_entry(
 ) -> None:
     """Set up the Kostal Modbus sensors."""
     data = hass.data[DOMAIN][entry.entry_id]
-    
+    coordinator = data.coordinator
+
     entities = [
-        KostalBatterySoCSensor(data, entry.entry_id),
-        KostalBatteryPowerSensor(data, entry.entry_id),
-        KostalBatteryVoltageSensor(data, entry.entry_id),
-        KostalBatteryCurrentSensor(data, entry.entry_id),
-        KostalBatteryTempSensor(data, entry.entry_id),
-        KostalBatteryMaxChargeLimitSensor(data, entry.entry_id),
-        KostalBatteryMaxDischargeLimitSensor(data, entry.entry_id),
+        KostalBatterySoCSensor(coordinator, entry.entry_id),
+        KostalBatteryPowerSensor(coordinator, entry.entry_id),
+        KostalBatteryVoltageSensor(coordinator, entry.entry_id),
+        KostalBatteryCurrentSensor(coordinator, entry.entry_id),
+        KostalBatteryTempSensor(coordinator, entry.entry_id),
+        KostalBatteryMaxChargeLimitSensor(coordinator, entry.entry_id),
+        KostalBatteryMaxDischargeLimitSensor(coordinator, entry.entry_id),
     ]
-    
+
     async_add_entities(entities)
 
-class KostalBaseSensor(SensorEntity):
+class KostalBaseSensor(CoordinatorEntity, SensorEntity):
     """Base class for Kostal sensors."""
 
     _attr_has_entity_name = True
-    _attr_should_poll = True  # Enable polling for updates
 
-    def __init__(self, data, entry_id):
-        self._data = data
+    def __init__(self, coordinator: KostalCoordinator, entry_id: str) -> None:
+        super().__init__(coordinator)
         self._entry_id = entry_id
         self._attr_unique_id = f"{entry_id}_{self._key}"
         self._attr_name = self._name
@@ -78,18 +79,16 @@ class KostalBaseSensor(SensorEntity):
             identifiers={(DOMAIN, self._entry_id)},
         )
 
-    async def async_update(self) -> None:
-        """Update the sensor."""
-        val = await self._data.handler.read_float(self._address)
-        if val is not None:
-            self._attr_native_value = round(val, 2)
-            self._attr_available = True
-            self._update_data_store(val)
-        else:
-            self._attr_available = False
-            
-    def _update_data_store(self, val):
-        pass
+    @property
+    def native_value(self):
+        if self.coordinator.data is None:
+            return None
+        val = self.coordinator.data.get(self._address)
+        return round(val, 2) if val is not None else None
+
+    @property
+    def available(self) -> bool:
+        return self.coordinator.last_update_success and self.coordinator.data is not None
 
 class KostalBatterySoCSensor(KostalBaseSensor):
     _key = SENSOR_BATTERY_SOC
@@ -138,9 +137,7 @@ class KostalBatteryMaxChargeLimitSensor(KostalBaseSensor):
     _attr_device_class = SensorDeviceClass.POWER
     _attr_native_unit_of_measurement = UnitOfPower.WATT
     _attr_state_class = SensorStateClass.MEASUREMENT
-    
-    def _update_data_store(self, val):
-        self._data.current_max_charge_watts = val
+
 
 class KostalBatteryMaxDischargeLimitSensor(KostalBaseSensor):
     _key = SENSOR_BATTERY_MAX_DISCHARGE_LIMIT
@@ -149,6 +146,3 @@ class KostalBatteryMaxDischargeLimitSensor(KostalBaseSensor):
     _attr_device_class = SensorDeviceClass.POWER
     _attr_native_unit_of_measurement = UnitOfPower.WATT
     _attr_state_class = SensorStateClass.MEASUREMENT
-
-    def _update_data_store(self, val):
-        self._data.current_max_discharge_watts = val

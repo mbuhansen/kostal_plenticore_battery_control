@@ -1,11 +1,10 @@
 {
   "domain": "kostal_modbus_control",
-  "name": "Kostal Modbus Control",
+  "name": "Kostal Plenticore Modbus Control",
   "codeowners": [],
   "config_flow": true,
   "documentation": "https://github.com/home-assistant/core",
   "iot_class": "local_polling",
-  "issue_tracker": "https://github.com/home-assistant/core/issues",
   "requirements": [
     "pymodbus>=3.6.0"
   ],

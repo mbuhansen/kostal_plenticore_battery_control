@@ -2,34 +2,80 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PORT, Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import (
-    CONF_UNIT_ID, 
-    DEFAULT_PORT, 
-    DEFAULT_UNIT_ID, 
-    DOMAIN, 
-    CONF_MODBUS_TIMEOUT, 
+    CONF_UNIT_ID,
+    DEFAULT_PORT,
+    DEFAULT_UNIT_ID,
+    DOMAIN,
+    CONF_MODBUS_TIMEOUT,
     DEFAULT_MODBUS_TIMEOUT,
+    LOOP_INTERVAL,
     REG_MANUFACTURER,
     REG_MODEL,
     REG_SERIAL,
+    REG_BATTERY_SOC,
+    REG_BATTERY_POWER,
+    REG_BATTERY_VOLTAGE,
+    REG_BATTERY_CURRENT,
+    REG_BATTERY_TEMP,
     REG_BATTERY_MAX_CHARGE_LIMIT,
-    REG_BATTERY_MAX_DISCHARGE_LIMIT
+    REG_BATTERY_MAX_DISCHARGE_LIMIT,
 )
 from .modbus_handler import KostalModbusHandler
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class KostalCoordinator(DataUpdateCoordinator):
+    """Coordinator that batches all sensor reads into a single update cycle."""
+
+    def __init__(self, hass: HomeAssistant, handler: KostalModbusHandler, kostal_data: "KostalData") -> None:
+        super().__init__(
+            hass,
+            _LOGGER,
+            name=DOMAIN,
+            update_interval=timedelta(seconds=LOOP_INTERVAL),
+        )
+        self._handler = handler
+        self._kostal_data = kostal_data
+
+    async def _async_update_data(self) -> dict:
+        try:
+            data: dict = {}
+            for address in (
+                REG_BATTERY_SOC,
+                REG_BATTERY_POWER,
+                REG_BATTERY_VOLTAGE,
+                REG_BATTERY_CURRENT,
+                REG_BATTERY_TEMP,
+                REG_BATTERY_MAX_CHARGE_LIMIT,
+                REG_BATTERY_MAX_DISCHARGE_LIMIT,
+            ):
+                data[address] = await self._handler.read_float(address)
+            if (val := data.get(REG_BATTERY_MAX_CHARGE_LIMIT)) is not None:
+                self._kostal_data.current_max_charge_watts = val
+            if (val := data.get(REG_BATTERY_MAX_DISCHARGE_LIMIT)) is not None:
+                self._kostal_data.current_max_discharge_watts = val
+            return data
+        except Exception as err:
+            raise UpdateFailed(f"Error communicating with Kostal inverter: {err}") from err
+
 
 PLATFORMS: list[Platform] = [Platform.SWITCH, Platform.NUMBER, Platform.SENSOR]
 
 @dataclass
 class KostalData:
     handler: KostalModbusHandler
+    coordinator: KostalCoordinator | None = None
     charge_rate: float = 5000.0
     discharge_rate: float = 5000.0
     last_stop_time: float = 0.0
@@ -48,8 +94,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     timeout = entry.data.get(CONF_MODBUS_TIMEOUT, DEFAULT_MODBUS_TIMEOUT)
 
     handler = KostalModbusHandler(host, port, unit_id)
-    # Ensure connection is established (or at least attempted)
-    await handler.connect()
+    try:
+        await handler.connect()
+    except Exception as err:
+        raise ConfigEntryNotReady(f"Cannot connect to Kostal inverter at {host}:{port}") from err
 
     # Read device info for registry
     # String 16 -> 8 registers, String 32 -> 16 registers
@@ -90,27 +138,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         serial_number=serial,
     )
     
-    # Read initial values for charge/discharge rates from battery limits
-    initial_charge_rate = 5000.0
-    initial_discharge_rate = 5000.0
+    data = KostalData(handler=handler, inverter_timeout=timeout)
 
-    try:
-        val_charge = await handler.read_float(REG_BATTERY_MAX_CHARGE_LIMIT)
-        if val_charge is not None:
-            initial_charge_rate = val_charge
-            
-        val_discharge = await handler.read_float(REG_BATTERY_MAX_DISCHARGE_LIMIT)
-        if val_discharge is not None:
-            initial_discharge_rate = val_discharge
-    except Exception as e:
-        _LOGGER.warning(f"Failed to read initial battery limits: {e}")
+    coordinator = KostalCoordinator(hass, handler, data)
+    await coordinator.async_config_entry_first_refresh()
+    data.coordinator = coordinator
 
-    data = KostalData(
-        handler=handler, 
-        inverter_timeout=timeout,
-        charge_rate=initial_charge_rate,
-        discharge_rate=initial_discharge_rate
-    )
     hass.data[DOMAIN][entry.entry_id] = data
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

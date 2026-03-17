@@ -38,6 +38,9 @@ class KostalNumber(RestoreNumber):
     """Representation of a Kostal Modbus Number."""
 
     _attr_has_entity_name = True
+    _attr_native_min_value = 0.0
+    _attr_native_max_value = 15000.0
+    _attr_native_step = 50.0
 
     def __init__(self, data, entry_id, key, name, default, unit):
         self._data = data

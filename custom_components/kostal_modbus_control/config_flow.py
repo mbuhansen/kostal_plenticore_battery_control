@@ -12,6 +12,7 @@ from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.data_entry_flow import FlowResult
 
 from .const import CONF_UNIT_ID, DEFAULT_PORT, DEFAULT_UNIT_ID, DOMAIN, CONF_MODBUS_TIMEOUT, DEFAULT_MODBUS_TIMEOUT
+from .modbus_handler import KostalModbusHandler
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,8 +31,18 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         
         if user_input is not None:
-             # Basic validation or connection check could be added here
-             return self.async_create_entry(title=f"Kostal {user_input[CONF_HOST]}", data=user_input)
+            handler = KostalModbusHandler(
+                user_input[CONF_HOST],
+                user_input.get(CONF_PORT, DEFAULT_PORT),
+                user_input.get(CONF_UNIT_ID, DEFAULT_UNIT_ID),
+            )
+            try:
+                await handler.connect()
+                await handler.close()
+            except Exception:
+                errors["base"] = "cannot_connect"
+            else:
+                return self.async_create_entry(title=f"Kostal {user_input[CONF_HOST]}", data=user_input)
 
         data_schema = vol.Schema(
             {
