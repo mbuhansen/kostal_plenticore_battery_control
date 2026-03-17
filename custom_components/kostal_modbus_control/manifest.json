@@ -1,6 +1,6 @@
 {
   "domain": "kostal_modbus_control",
-  "name": "Kostal Plenticore Modbus Control",
+  "name": "Kostal Plenticore Battery Control",
   "codeowners": [],
   "config_flow": true,
   "documentation": "https://github.com/home-assistant/core",

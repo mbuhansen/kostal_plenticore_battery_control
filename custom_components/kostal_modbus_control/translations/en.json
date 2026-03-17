@@ -2,7 +2,7 @@
     "config": {
         "step": {
             "user": {
-                "title": "Kostal Plenticore Modbus Control",
+                "title": "Kostal Plenticore Battery Control",
                 "data": {
                     "host": "IP Address of Inverter",
                     "port": "Port",
