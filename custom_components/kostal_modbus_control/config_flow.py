@@ -19,6 +19,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Kostal Modbus Control."""
 
     VERSION = 1
+    
+    # Compatibility with different HA versions
+    _attr_domain = DOMAIN 
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None

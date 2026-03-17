@@ -7,7 +7,7 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/home-assistant/core/issues",
   "requirements": [
-    "pymodbus>=3.0.0"
+    "pymodbus>=3.6.0"
   ],
-  "version": "1.0.0"
+  "version": "1.0.1"
 }

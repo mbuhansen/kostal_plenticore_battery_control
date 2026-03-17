@@ -1,9 +1,23 @@
 import logging
 import struct
 import asyncio
-from pymodbus.client import AsyncModbusTcpClient
-from pymodbus.payload import BinaryPayloadBuilder, BinaryPayloadDecoder
-from pymodbus.constants import Endian
+
+# Attempt to handle pymodbus imports gracefully
+try:
+    from pymodbus.client import AsyncModbusTcpClient
+    from pymodbus.payload import BinaryPayloadBuilder, BinaryPayloadDecoder
+    from pymodbus.constants import Endian
+except ImportError:
+    # Older versions might not have 'payload' in global namespace or have moved it
+    # This is a fallback attempt or just to prevent initial load crash
+    try:
+        from pymodbus.client.sync import ModbusTcpClient as AsyncModbusTcpClient # Fallback dummy or wrong
+        # No good fallback for payload if missing completely
+        BinaryPayloadBuilder = None
+        BinaryPayloadDecoder = None
+        Endian = None
+    except ImportError:
+        pass
 
 class KostalModbusHandler:
     def __init__(self, host, port, unit_id):

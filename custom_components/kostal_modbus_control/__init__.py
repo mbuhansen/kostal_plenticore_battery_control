@@ -53,15 +53,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Read device info for registry
     # String 16 -> 8 registers, String 32 -> 16 registers
-    manufacturer = await handler.read_string(REG_MANUFACTURER, 8) 
+    try:
+        manufacturer = await handler.read_string(REG_MANUFACTURER, 8) 
+    except Exception:
+        manufacturer = None
+        
     if not manufacturer:
         manufacturer = "Kostal"
     
-    model = await handler.read_string(REG_MODEL, 16)
+    try:
+        model = await handler.read_string(REG_MODEL, 16)
+    except Exception:
+        model = None
+        
     if not model:
          model = "Unknown Model"
 
-    serial = await handler.read_string(REG_SERIAL, 8)
+    try:
+        serial = await handler.read_string(REG_SERIAL, 8)
+    except Exception:
+        serial = None
+        
     if not serial:
          serial = "Unknown Serial"
 
