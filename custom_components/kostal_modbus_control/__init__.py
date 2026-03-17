@@ -87,8 +87,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     host = entry.data[CONF_HOST]
     port = entry.data.get(CONF_PORT, DEFAULT_PORT)
-    unit_id = entry.data.get(CONF_UNIT_ID, DEFAULT_UNIT_ID)
+    unit_id = DEFAULT_UNIT_ID  # Always 71 for Plenticore battery management
     timeout = entry.data.get(CONF_MODBUS_TIMEOUT, DEFAULT_MODBUS_TIMEOUT)
+
+    _LOGGER.info("Setting up Kostal Modbus: host=%s port=%s unit_id=%s", host, port, unit_id)
 
     handler = KostalModbusHandler(host, port, unit_id)
     try:
@@ -109,10 +111,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     data = KostalData(handler=handler, inverter_timeout=timeout)
 
     coordinator = KostalCoordinator(hass, handler, data)
-    # Do first refresh in background — sensors will be unavailable until data arrives
-    # This prevents ConfigEntryNotReady if the inverter is temporarily slow
-    entry.async_create_background_task(
-        hass,
+    # Use hass.async_create_background_task for broad HA version compatibility
+    hass.async_create_background_task(
         coordinator.async_refresh(),
         "kostal_modbus_initial_refresh",
     )
