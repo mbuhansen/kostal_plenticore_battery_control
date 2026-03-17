@@ -1,6 +1,6 @@
-# Kostal Plenticore Modbus Control for Home Assistant
+# Kostal Plenticore Battery Control for Home Assistant
 
-This custom integration allows for advanced control of Kostal Plenticore inverters via Modbus TCP. It is specifically designed to control battery charging and discharging behavior "externally," allowing you to force charge from the grid or force discharge based on Home Assistant automations (e.g., electricity prices).
+This custom integration allows for advanced Battery control of Kostal Plenticore inverters via Modbus TCP. It is specifically designed to control battery charging and discharging behavior "externally," allowing you to force charge from the grid or force discharge based on Home Assistant automations (e.g., electricity prices).
 
 ## Features
 
