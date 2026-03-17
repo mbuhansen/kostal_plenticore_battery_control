@@ -1,6 +1,7 @@
 import logging
 import struct
 import asyncio
+import inspect
 
 from pymodbus.client import AsyncModbusTcpClient
 
@@ -12,6 +13,7 @@ class KostalModbusHandler:
         self._client = None
         self._lock = asyncio.Lock()
         self._logger = logging.getLogger(__name__)
+        self._unit_kwarg = None  # Detected at first use
 
     async def connect(self):
         async with self._lock:
@@ -28,15 +30,37 @@ class KostalModbusHandler:
                 self._client.close()
                 self._client = None
     
+    def _detect_unit_kwarg(self):
+        """Detect the parameter name for slave/unit ID in this pymodbus version."""
+        if self._unit_kwarg is not None:
+            return
+        params = inspect.signature(self._client.read_holding_registers).parameters
+        self._logger.warning("pymodbus read_holding_registers params: %s", list(params.keys()))
+        for name in ("slave", "unit", "dev_id"):
+            if name in params:
+                self._unit_kwarg = name
+                self._logger.warning("Using '%s' as unit_id kwarg", name)
+                return
+        self._unit_kwarg = ""  # No unit kwarg found
+        self._logger.warning("No unit/slave/dev_id param found — unit_id will NOT be sent!")
+
     async def _safe_read(self, address, count):
-        """Read holding registers — unit_id passed positionally for cross-version compatibility."""
-        self._logger.debug("READ address=%s count=%s unit_id=%s", address, count, self._unit_id)
-        return await self._client.read_holding_registers(address, count, self._unit_id)
+        """Read holding registers with auto-detected unit_id parameter name."""
+        self._detect_unit_kwarg()
+        self._logger.debug("READ address=%s count=%s unit_id=%s (kwarg=%s)", address, count, self._unit_id, self._unit_kwarg)
+        kwargs = {"count": count}
+        if self._unit_kwarg:
+            kwargs[self._unit_kwarg] = self._unit_id
+        return await self._client.read_holding_registers(address, **kwargs)
 
     async def _safe_write(self, address, values):
-        """Write registers — unit_id passed positionally for cross-version compatibility."""
+        """Write registers with auto-detected unit_id parameter name."""
+        self._detect_unit_kwarg()
         self._logger.debug("WRITE address=%s values=%s unit_id=%s", address, values, self._unit_id)
-        return await self._client.write_registers(address, values, self._unit_id)
+        kwargs = {"values": values}
+        if self._unit_kwarg:
+            kwargs[self._unit_kwarg] = self._unit_id
+        return await self._client.write_registers(address, **kwargs)
 
     async def read_string(self, address, length):
         """Reads a string from holding registers."""

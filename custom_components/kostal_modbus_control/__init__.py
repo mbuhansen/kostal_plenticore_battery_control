@@ -27,9 +27,12 @@ from .const import (
     REG_BATTERY_MAX_CHARGE_LIMIT,
     REG_BATTERY_MAX_DISCHARGE_LIMIT,
 )
+import pymodbus
+
 from .modbus_handler import KostalModbusHandler
 
 _LOGGER = logging.getLogger(__name__)
+_LOGGER.warning("pymodbus version: %s", pymodbus.__version__)
 
 
 class KostalCoordinator(DataUpdateCoordinator):
