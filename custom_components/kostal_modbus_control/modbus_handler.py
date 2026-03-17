@@ -49,10 +49,18 @@ class KostalModbusHandler:
                 address, count, slave=self._unit_id
             )
         except TypeError:
-            # Fallback to 'unit' (older versions or compatibility layers)
-            return await self._client.read_holding_registers(
-                address, count, unit=self._unit_id
-            )
+            # Fallback to 'unit' (older versions)
+            try:
+                return await self._client.read_holding_registers(
+                    address, count, unit=self._unit_id
+                )
+            except TypeError:
+                # Fallback to no argument (defaults to 1 or 0 usually)
+                # Warning: This might send to wrong unit if device is strict
+                self._logger.warning("Could not pass slave/unit ID to read_holding_registers. Using default.")
+                return await self._client.read_holding_registers(
+                    address, count
+                )
 
     async def _safe_write(self, address, values):
         """Invoke write_registers with compatible unit/slave argument."""
@@ -61,9 +69,15 @@ class KostalModbusHandler:
                 address, values, slave=self._unit_id
             )
         except TypeError:
-            return await self._client.write_registers(
-                address, values, unit=self._unit_id
-            )
+            try:
+                return await self._client.write_registers(
+                    address, values, unit=self._unit_id
+                )
+            except TypeError:
+                self._logger.warning("Could not pass slave/unit ID to write_registers. Using default.")
+                return await self._client.write_registers(
+                    address, values
+                )
 
     async def read_string(self, address, length):
         """Reads a string from holding registers."""
@@ -79,6 +93,9 @@ class KostalModbusHandler:
                     self._logger.error(f"Error reading string from {address}: {result}")
                     return None
                 
+                # Kostal typically uses Big Endian Byte order, and Big Endian Word order for strings
+                # But if 'swap: word' is active for floats, we must be careful.
+                # Usually strings are just a stream of bytes.
                 decoder = BinaryPayloadDecoder.fromRegisters(
                     result.registers, byteorder=Endian.BIG, wordorder=Endian.BIG
                 )
@@ -87,12 +104,11 @@ class KostalModbusHandler:
                 return decoded
             except Exception as e:
                 self._logger.error(f"Exception reading string from {address}: {e}")
-                # Don't close on read error to preserve attempt
-                # await self.close() 
                 return None
 
     async def read_float(self, address):
-        """Reads a float (32-bit) from two 16-bit registers (Big Endian)."""
+        """Reads a float (32-bit) from two 16-bit registers."""
+        # Based on user config 'swap: word', we need Little Endian Word Order.
         await self.connect()
         async with self._lock:
             try:
@@ -103,20 +119,21 @@ class KostalModbusHandler:
                     self._logger.error(f"Error reading float from {address}: {result}")
                     return None
                 
+                # 'swap: word' implies Little Endian Word Order with Big Endian Byte Order
                 decoder = BinaryPayloadDecoder.fromRegisters(
-                    result.registers, byteorder=Endian.BIG, wordorder=Endian.BIG
+                    result.registers, byteorder=Endian.BIG, wordorder=Endian.LITTLE
                 )
                 val = decoder.decode_32bit_float()
                 return val
             except Exception as e:
                 self._logger.error(f"Exception reading float from {address}: {e}")
-                # await self.close()
                 return None
 
     async def write_float(self, address, value):
-        """Writes a float value to two 16-bit registers (Big Endian)."""
+        """Writes a float value to two 16-bit registers."""
         await self.connect()
-        builder = BinaryPayloadBuilder(byteorder=Endian.BIG, wordorder=Endian.BIG)
+        # 'swap: word' implies Little Endian Word Order with Big Endian Byte Order
+        builder = BinaryPayloadBuilder(byteorder=Endian.BIG, wordorder=Endian.LITTLE)
         builder.add_32bit_float(float(value))
         registers = builder.to_registers()
         
