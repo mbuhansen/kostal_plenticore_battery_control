@@ -84,8 +84,12 @@ class KostalBaseSensor(SensorEntity):
         if val is not None:
             self._attr_native_value = round(val, 2)
             self._attr_available = True
+            self._update_data_store(val)
         else:
             self._attr_available = False
+            
+    def _update_data_store(self, val):
+        pass
 
 class KostalBatterySoCSensor(KostalBaseSensor):
     _key = SENSOR_BATTERY_SOC
@@ -134,6 +138,9 @@ class KostalBatteryMaxChargeLimitSensor(KostalBaseSensor):
     _attr_device_class = SensorDeviceClass.POWER
     _attr_native_unit_of_measurement = UnitOfPower.WATT
     _attr_state_class = SensorStateClass.MEASUREMENT
+    
+    def _update_data_store(self, val):
+        self._data.current_max_charge_watts = val
 
 class KostalBatteryMaxDischargeLimitSensor(KostalBaseSensor):
     _key = SENSOR_BATTERY_MAX_DISCHARGE_LIMIT
@@ -142,3 +149,6 @@ class KostalBatteryMaxDischargeLimitSensor(KostalBaseSensor):
     _attr_device_class = SensorDeviceClass.POWER
     _attr_native_unit_of_measurement = UnitOfPower.WATT
     _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def _update_data_store(self, val):
+        self._data.current_max_discharge_watts = val

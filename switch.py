@@ -17,6 +17,7 @@ from .const import (
     DOMAIN,
     LOOP_INTERVAL,
     REG_CHARGE_DISCHARGE_LIMIT,
+    REG_POWER_LIMIT_W,
     REG_CHARGE_RATE,
     REG_CHARGE_RATE_ALT,
     REG_DISCHARGE_RATE,
@@ -131,32 +132,46 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
     _name = "Charge Start"
 
     async def _loop_action(self, *args):
-        # Write negative max charge percent to 1028
-        val_limit = -abs(self._data.max_charge_percent)
-        await self._data.handler.write_float(REG_CHARGE_DISCHARGE_LIMIT, val_limit)
+        # User defined watts
+        user_watts = self._data.charge_rate
+        # Max limit from battery sensor
+        max_limit = self._data.current_max_charge_watts
         
-        # Charge Start: No specific write to 1038 or 1040 needed unless specified.
-        # But if we need to set max charge rate here? The automation used 1034 before.
-        # Since you said 1038/1040 are for BLOCKING (0), we might not need to write to them here?
-        # However, to be safe, if we want to ensure charging is ALLOWED, we might need to reset blocks?
-        # For now, following ONLY the logic for 1028 as the primary control for forcing charge.
+        # Clamp to max limit if available (greater than 0)
+        target_watts = user_watts
+        if max_limit > 0:
+            target_watts = min(user_watts, max_limit)
+        
+        # Write negative target watts to 1034 (Charge)
+        val_to_write = -abs(target_watts)
+        await self._data.handler.write_float(REG_POWER_LIMIT_W, val_to_write)
 
     async def _stop_action(self):
         # Write 0 stop charge
-        await self._data.handler.write_float(REG_CHARGE_DISCHARGE_LIMIT, 0.0)
+        await self._data.handler.write_float(REG_POWER_LIMIT_W, 0.0)
 
 class KostalDischargeStartSwitch(KostalBaseSwitch):
     _key = SWITCH_DISCHARGE_START
     _name = "Discharge Start"
 
     async def _loop_action(self, *args):
-        # Write positive max discharge percent to 1028
-        val_limit = abs(self._data.max_discharge_percent)
-        await self._data.handler.write_float(REG_CHARGE_DISCHARGE_LIMIT, val_limit)
+        # User defined watts
+        user_watts = self._data.discharge_rate
+        # Max limit from battery sensor
+        max_limit = self._data.current_max_discharge_watts
+        
+        # Clamp to max limit if available (greater than 0)
+        target_watts = user_watts
+        if max_limit > 0:
+            target_watts = min(user_watts, max_limit)
+
+        # Write positive target watts to 1034 (Discharge)
+        val_to_write = abs(target_watts)
+        await self._data.handler.write_float(REG_POWER_LIMIT_W, val_to_write)
 
     async def _stop_action(self):
         # Write 0 stop discharge
-        await self._data.handler.write_float(REG_CHARGE_DISCHARGE_LIMIT, 0.0)
+        await self._data.handler.write_float(REG_POWER_LIMIT_W, 0.0)
 
 class KostalBlockDischargeSwitch(KostalBaseSwitch):
     _key = SWITCH_BLOCK_DISCHARGE

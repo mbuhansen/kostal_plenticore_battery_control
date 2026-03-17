@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from homeassistant.components.number import NumberEntity
+from homeassistant.components.number import NumberEntity, RestoreNumber
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -29,16 +29,15 @@ async def async_setup_entry(
     """Set up the Kostal Modbus numbers."""
     data = hass.data[DOMAIN][entry.entry_id]
     
+    # Use current data values as defaults (initialized from battery limits in __init__)
     entities = [
-        KostalNumber(data, entry.entry_id, NUMBER_MAX_CHARGE_PERCENT, "Max Charge Percent", DEFAULT_MAX_PERCENT, "%"),
-        KostalNumber(data, entry.entry_id, NUMBER_MAX_DISCHARGE_PERCENT, "Max Discharge Percent", DEFAULT_MAX_PERCENT, "%"),
-        KostalNumber(data, entry.entry_id, NUMBER_CHARGE_RATE, "Charge Rate", DEFAULT_CHARGE_RATE, "W"),
-        KostalNumber(data, entry.entry_id, NUMBER_DISCHARGE_RATE, "Discharge Rate", DEFAULT_DISCHARGE_RATE, "W"),
+        KostalNumber(data, entry.entry_id, NUMBER_CHARGE_RATE, "Set Charge Rate", data.charge_rate, "W"),
+        KostalNumber(data, entry.entry_id, NUMBER_DISCHARGE_RATE, "Set Discharge Rate", data.discharge_rate, "W"),
     ]
     
     async_add_entities(entities)
 
-class KostalNumber(NumberEntity):
+class KostalNumber(RestoreNumber):
     """Representation of a Kostal Modbus Number."""
 
     _attr_has_entity_name = True
@@ -53,8 +52,15 @@ class KostalNumber(NumberEntity):
         self._attr_native_unit_of_measurement = unit
         self._attr_mode = "box"
         
-        # Initialize data store
+        # Initialize data store with default initially
         self._update_data_store(default)
+        
+    async def async_added_to_hass(self) -> None:
+        """Handle entity which will be added."""
+        await super().async_added_to_hass()
+        if (state := await self.async_get_last_number_data()) is not None and state.native_value is not None:
+             self._attr_native_value = state.native_value
+             self._update_data_store(state.native_value)
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -64,11 +70,7 @@ class KostalNumber(NumberEntity):
 
     def _update_data_store(self, value):
         """Update the shared data object."""
-        if self._key == NUMBER_MAX_CHARGE_PERCENT:
-            self._data.max_charge_percent = value
-        elif self._key == NUMBER_MAX_DISCHARGE_PERCENT:
-            self._data.max_discharge_percent = value
-        elif self._key == NUMBER_CHARGE_RATE:
+        if self._key == NUMBER_CHARGE_RATE:
             self._data.charge_rate = value
         elif self._key == NUMBER_DISCHARGE_RATE:
             self._data.discharge_rate = value

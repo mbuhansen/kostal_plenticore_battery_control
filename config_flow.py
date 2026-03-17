@@ -25,18 +25,22 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Handle the initial step."""
         errors: dict[str, str] = {}
+        
         if user_input is not None:
-            return self.async_create_entry(title=user_input[CONF_HOST], data=user_input)
+             # Basic validation or connection check could be added here
+             return self.async_create_entry(title=f"Kostal {user_input[CONF_HOST]}", data=user_input)
+
+        data_schema = vol.Schema(
+            {
+                vol.Required(CONF_HOST): str,
+                vol.Required(CONF_PORT, default=DEFAULT_PORT): int,
+                vol.Required(CONF_UNIT_ID, default=DEFAULT_UNIT_ID): int,
+                vol.Required(CONF_MODBUS_TIMEOUT, default=DEFAULT_MODBUS_TIMEOUT): int,
+            }
+        )
 
         return self.async_show_form(
             step_id="user",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_HOST): str,
-                    vol.Optional(CONF_PORT, default=DEFAULT_PORT): int,
-                    vol.Optional(CONF_UNIT_ID, default=DEFAULT_UNIT_ID): int,
-                    vol.Optional(CONF_MODBUS_TIMEOUT, default=DEFAULT_MODBUS_TIMEOUT): int,
-                }
-            ),
+            data_schema=data_schema,
             errors=errors,
         )

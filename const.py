@@ -15,6 +15,7 @@ REG_MANUFACTURER = 535        # Inverter Manufacturer (String 16)
 REG_MODEL = 768               # Productname (String 32)
 REG_SERIAL = 559              # Inverter Serial Number (String 16)
 REG_CHARGE_DISCHARGE_LIMIT = 1028 # Controls max charge/discharge power (%)
+REG_POWER_LIMIT_W = 1034          # Power Limit (Watts) - Negative=Charge, Positive=Discharge
 REG_CHARGE_RATE = 1038            # Battery Charge Rate (Watts) - Positive
 REG_DISCHARGE_RATE = 1040         # Battery Discharge Rate (Watts) - Positive
 
@@ -48,8 +49,6 @@ SWITCH_BLOCK_CHARGE = "block_charge"
 SWITCH_BLOCK_DISCHARGE = "block_discharge"
 
 # Entity descriptions (Numbers/Input Numbers)
-NUMBER_MAX_CHARGE_PERCENT = "max_charge_percent"
-NUMBER_MAX_DISCHARGE_PERCENT = "max_discharge_percent"
 NUMBER_CHARGE_RATE = "charge_rate"
 NUMBER_DISCHARGE_RATE = "discharge_rate"
 

@@ -17,7 +17,9 @@ from .const import (
     DEFAULT_MODBUS_TIMEOUT,
     REG_MANUFACTURER,
     REG_MODEL,
-    REG_SERIAL
+    REG_SERIAL,
+    REG_BATTERY_MAX_CHARGE_LIMIT,
+    REG_BATTERY_MAX_DISCHARGE_LIMIT
 )
 from .modbus_handler import KostalModbusHandler
 
@@ -28,15 +30,12 @@ PLATFORMS: list[Platform] = [Platform.SWITCH, Platform.NUMBER, Platform.SENSOR]
 @dataclass
 class KostalData:
     handler: KostalModbusHandler
-    # Configuration
-    inverter_timeout: int = DEFAULT_MODBUS_TIMEOUT
-    # Current configured values (from Number entities)
-    max_charge_percent: float = 100.0
-    max_discharge_percent: float = 100.0
     charge_rate: float = 5000.0
     discharge_rate: float = 5000.0
-    # Timestamp of when the last switch was turned off (0 if never)
     last_stop_time: float = 0.0
+    inverter_timeout: int = DEFAULT_MODBUS_TIMEOUT
+    current_max_charge_watts: float = 0.0
+    current_max_discharge_watts: float = 0.0
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -78,8 +77,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         name=f"Kostal Inverter {host}",
         serial_number=serial,
     )
+    
+    # Read initial values for charge/discharge rates from battery limits
+    initial_charge_rate = 5000.0
+    initial_discharge_rate = 5000.0
 
-    data = KostalData(handler=handler, inverter_timeout=timeout)
+    try:
+        val_charge = await handler.read_float(REG_BATTERY_MAX_CHARGE_LIMIT)
+        if val_charge is not None:
+            initial_charge_rate = val_charge
+            
+        val_discharge = await handler.read_float(REG_BATTERY_MAX_DISCHARGE_LIMIT)
+        if val_discharge is not None:
+            initial_discharge_rate = val_discharge
+    except Exception as e:
+        _LOGGER.warning(f"Failed to read initial battery limits: {e}")
+
+    data = KostalData(
+        handler=handler, 
+        inverter_timeout=timeout,
+        charge_rate=initial_charge_rate,
+        discharge_rate=initial_discharge_rate
+    )
     hass.data[DOMAIN][entry.entry_id] = data
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
