@@ -44,6 +44,9 @@ async def async_setup_entry(
         KostalBlockChargeSwitch(data, entry.entry_id),
     ]
     
+    for entity in entities:
+        entity.set_related_switches(entities)
+    
     async_add_entities(entities)
 
 class KostalBaseSwitch(SwitchEntity):
@@ -59,12 +62,16 @@ class KostalBaseSwitch(SwitchEntity):
         self._attr_name = self._name
         self._remove_timer = None
         self._attr_is_on = False
+        self._related_switches = []
         
         # Calculate derived timings
         # Loop interval = Inverter Timeout / 2 (send twice per timeout period)
         self._loop_interval = max(int(self._data.inverter_timeout / 2), 5)
         # Wait time = Inverter Timeout + X (e.g., 15s safety buffer)
         self._wait_time_before_start = self._data.inverter_timeout + 15.0
+
+    def set_related_switches(self, switches):
+        self._related_switches = switches
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -74,6 +81,11 @@ class KostalBaseSwitch(SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the switch on."""
+        # Ensure mutually exclusive behavior
+        for switch in self._related_switches:
+            if switch is not self and switch.is_on:
+                await switch.async_turn_off()
+
         self._attr_is_on = True
         self.async_write_ha_state() # Update state immediately
         

@@ -52,6 +52,28 @@ class KostalModbusHandler:
                 await self.close()
                 return None
 
+    async def read_float(self, address):
+        """Reads a float (32-bit) from two 16-bit registers (Big Endian)."""
+        await self.connect()
+        async with self._lock:
+            try:
+                result = await self._client.read_holding_registers(
+                    address, 2, slave=self._unit_id
+                )
+                if result.isError():
+                    self._logger.error(f"Error reading float from {address}: {result}")
+                    return None
+                
+                decoder = BinaryPayloadDecoder.fromRegisters(
+                    result.registers, byteorder=Endian.BIG, wordorder=Endian.BIG
+                )
+                val = decoder.decode_32bit_float()
+                return val
+            except Exception as e:
+                self._logger.error(f"Exception reading float from {address}: {e}")
+                await self.close()
+                return None
+
     async def write_float(self, address, value):
         """Writes a float value to two 16-bit registers (Big Endian)."""
         await self.connect()
