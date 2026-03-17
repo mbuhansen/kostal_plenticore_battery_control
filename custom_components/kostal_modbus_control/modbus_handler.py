@@ -29,18 +29,14 @@ class KostalModbusHandler:
                 self._client = None
     
     async def _safe_read(self, address, count):
-        """Read holding registers using pymodbus 3.6+ API."""
-        self._logger.debug("READ address=%s count=%s slave=%s", address, count, self._unit_id)
-        return await self._client.read_holding_registers(
-            address=address, count=count, slave=self._unit_id
-        )
+        """Read holding registers — unit_id passed positionally for cross-version compatibility."""
+        self._logger.debug("READ address=%s count=%s unit_id=%s", address, count, self._unit_id)
+        return await self._client.read_holding_registers(address, count, self._unit_id)
 
     async def _safe_write(self, address, values):
-        """Write registers using pymodbus 3.6+ API."""
-        self._logger.debug("WRITE address=%s values=%s slave=%s", address, values, self._unit_id)
-        return await self._client.write_registers(
-            address=address, values=values, slave=self._unit_id
-        )
+        """Write registers — unit_id passed positionally for cross-version compatibility."""
+        self._logger.debug("WRITE address=%s values=%s unit_id=%s", address, values, self._unit_id)
+        return await self._client.write_registers(address, values, self._unit_id)
 
     async def read_string(self, address, length):
         """Reads a string from holding registers."""
