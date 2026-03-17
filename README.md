@@ -97,6 +97,16 @@ The EMS (Energy Management System) switch protects your house fuses during force
 | Grid Current Phase 2 | A | Phase 2 current at grid connection point |
 | Grid Current Phase 3 | A | Phase 3 current at grid connection point |
 | Smart Meter Type | — | Detected smart meter model or "No sensor" |
+| EMS Grid Protection Status | — | Current state of the EMS Grid Protection function |
+
+**EMS Grid Protection Status** values:
+
+| Status | Meaning |
+|---|---|
+| `inactive` | EMS switch is off — no active power control |
+| `ok` | EMS is active — all phases are well within fuse limits, full charge rate applied |
+| `protecting` | EMS is actively reducing charge power to keep phase currents below fuse limit |
+| `blocked` | EMS has set charge to 0 W — phase current is already at the fuse limit without any charging |
 
 ## Technical Details
 
