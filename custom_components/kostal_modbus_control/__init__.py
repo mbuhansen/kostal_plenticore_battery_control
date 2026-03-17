@@ -92,6 +92,7 @@ class KostalData:
     inverter_timeout: int = DEFAULT_MODBUS_TIMEOUT
     current_max_charge_watts: float = 0.0
     current_max_discharge_watts: float = 0.0
+    ems_status: str = "inactive"
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

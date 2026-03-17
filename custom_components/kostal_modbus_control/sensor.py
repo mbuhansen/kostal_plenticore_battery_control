@@ -16,6 +16,7 @@ from homeassistant.const import (
     UnitOfTemperature,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -43,7 +44,9 @@ from .const import (
     SENSOR_CURRENT_PHASE2,
     SENSOR_CURRENT_PHASE3,
     SENSOR_SENSOR_TYPE,
+    SENSOR_EMS_STATUS,
     SENSOR_TYPE_MAP,
+    SIGNAL_EMS_STATUS_UPDATED,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -68,6 +71,7 @@ async def async_setup_entry(
         KostalCurrentPhase2Sensor(coordinator, entry.entry_id),
         KostalCurrentPhase3Sensor(coordinator, entry.entry_id),
         KostalSensorTypeSensor(coordinator, entry.entry_id),
+        KostalEMSStatusSensor(data, entry.entry_id),
     ]
 
     async_add_entities(entities)
@@ -202,3 +206,39 @@ class KostalSensorTypeSensor(KostalBaseSensor):
         if val is None:
             return None
         return SENSOR_TYPE_MAP.get(val, f"Unknown (0x{val:02X})")
+
+
+class KostalEMSStatusSensor(SensorEntity):
+    """Sensor showing the current EMS Grid Protection status."""
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = ["inactive", "ok", "protecting", "blocked"]
+    _attr_icon = "mdi:shield-check"
+
+    def __init__(self, data, entry_id: str) -> None:
+        self._data = data
+        self._entry_id = entry_id
+        self._attr_unique_id = f"{entry_id}_{SENSOR_EMS_STATUS}"
+        self._attr_name = "EMS Grid Protection Status"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(identifiers={(DOMAIN, self._entry_id)})
+
+    @property
+    def native_value(self) -> str:
+        return self._data.ems_status
+
+    async def async_added_to_hass(self) -> None:
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass,
+                f"{SIGNAL_EMS_STATUS_UPDATED}_{self._entry_id}",
+                self._handle_status_update,
+            )
+        )
+
+    def _handle_status_update(self, status: str) -> None:
+        self.async_write_ha_state()

@@ -11,6 +11,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.entity import DeviceInfo
 
 from .const import (
@@ -31,6 +32,7 @@ from .const import (
     SWITCH_EMS,
     EMS_SAFETY_MARGIN,
     EMS_PHASE_VOLTAGE,
+    SIGNAL_EMS_STATUS_UPDATED,
 )
 from .modbus_handler import KostalModbusHandler
 
@@ -259,14 +261,30 @@ class KostalEMSSwitch(KostalBaseSwitch):
         # Clamp: 0 minimum (never discharge), user charge rate as maximum
         target_watts = max(0.0, min(max_charge_watts, self._data.charge_rate))
 
+        if target_watts == 0.0:
+            new_status = "blocked"
+        elif target_watts < self._data.charge_rate:
+            new_status = "protecting"
+        else:
+            new_status = "ok"
+
         _LOGGER.debug(
-            "EMS: phase=%.1f/%.1f/%.1f A, fuse=%sA, headroom=%.0f/%.0f/%.0f W → charge=%.0f W",
+            "EMS: phase=%.1f/%.1f/%.1f A, fuse=%sA, headroom=%.0f/%.0f/%.0f W → charge=%.0f W (%s)",
             phase1, phase2, phase3, fuse_size,
             headroom_watts[0], headroom_watts[1], headroom_watts[2],
-            target_watts,
+            target_watts, new_status,
+        )
+
+        self._data.ems_status = new_status
+        async_dispatcher_send(
+            self.hass, f"{SIGNAL_EMS_STATUS_UPDATED}_{self._entry_id}", new_status
         )
 
         await self._data.handler.write_float(REG_POWER_LIMIT_W, -target_watts)
 
     async def _stop_action(self) -> None:
+        self._data.ems_status = "inactive"
+        async_dispatcher_send(
+            self.hass, f"{SIGNAL_EMS_STATUS_UPDATED}_{self._entry_id}", "inactive"
+        )
         await self._data.handler.write_float(REG_POWER_LIMIT_W, 0.0)
