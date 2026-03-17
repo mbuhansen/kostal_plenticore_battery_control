@@ -3,8 +3,6 @@ import struct
 import asyncio
 
 from pymodbus.client import AsyncModbusTcpClient
-from pymodbus.payload import BinaryPayloadBuilder, BinaryPayloadDecoder
-from pymodbus.constants import Endian
 
 class KostalModbusHandler:
     def __init__(self, host, port, unit_id):
@@ -85,15 +83,9 @@ class KostalModbusHandler:
                     self._logger.error(f"Error reading string from {address}: {result}")
                     return None
                 
-                # Kostal typically uses Big Endian Byte order, and Big Endian Word order for strings
-                # But if 'swap: word' is active for floats, we must be careful.
-                # Usually strings are just a stream of bytes.
-                decoder = BinaryPayloadDecoder.fromRegisters(
-                    result.registers, byteorder=Endian.BIG, wordorder=Endian.BIG
-                )
-                # Decode string and strip null bytes
-                decoded = decoder.decode_string(length * 2).decode("utf-8").strip('\x00')
-                return decoded
+                # Build raw bytes from registers (Big Endian byte and word order)
+                raw = b"".join(struct.pack(">H", r) for r in result.registers)
+                return raw.decode("utf-8", errors="replace").strip("\x00")
             except Exception as e:
                 self._logger.error(f"Exception reading string from {address}: {e}")
                 return None
@@ -111,12 +103,9 @@ class KostalModbusHandler:
                     self._logger.error(f"Error reading float from {address}: {result}")
                     return None
                 
-                # 'swap: word' implies Little Endian Word Order with Big Endian Byte Order
-                decoder = BinaryPayloadDecoder.fromRegisters(
-                    result.registers, byteorder=Endian.BIG, wordorder=Endian.LITTLE
-                )
-                val = decoder.decode_32bit_float()
-                return val
+                # Big Endian bytes, Little Endian word order: [low_word, high_word]
+                raw = struct.pack(">HH", result.registers[1], result.registers[0])
+                return struct.unpack(">f", raw)[0]
             except Exception as e:
                 self._logger.error(f"Exception reading float from {address}: {e}")
                 return None
@@ -124,10 +113,10 @@ class KostalModbusHandler:
     async def write_float(self, address, value):
         """Writes a float value to two 16-bit registers."""
         await self.connect()
-        # 'swap: word' implies Little Endian Word Order with Big Endian Byte Order
-        builder = BinaryPayloadBuilder(byteorder=Endian.BIG, wordorder=Endian.LITTLE)
-        builder.add_32bit_float(float(value))
-        registers = builder.to_registers()
+        # Big Endian bytes, Little Endian word order: write [low_word, high_word]
+        raw = struct.pack(">f", float(value))
+        high_word, low_word = struct.unpack(">HH", raw)
+        registers = [low_word, high_word]
         
         async with self._lock:
             try:
