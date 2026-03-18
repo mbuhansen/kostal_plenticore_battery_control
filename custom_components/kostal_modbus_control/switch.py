@@ -246,6 +246,8 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                 await self._data.handler.write_float(REG_DISCHARGE_RATE, self._data.discharge_rate)
 
     async def _stop_action(self):
+        # Send 0 as final command so inverter stops charging immediately.
+        # After this nothing is written to 1034 until a new switch starts.
         await self._data.handler.write_float(REG_POWER_LIMIT_W, 0.0)
         if self._predbat_discharge_blocked:
             self._predbat_discharge_blocked = False
