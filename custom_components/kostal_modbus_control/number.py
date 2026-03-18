@@ -46,7 +46,6 @@ class KostalNumber(RestoreNumber):
     _attr_mode = "box"
 
     def __init__(self, data, entry_id, key, name, unit, default):
-        CoordinatorEntity.__init__(self, coordinator)
         self._data = data
         self._entry_id = entry_id
         self._key = key
