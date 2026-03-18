@@ -216,7 +216,7 @@ class KostalEMSStatusSensor(SensorEntity):
     _attr_has_entity_name = True
     _attr_should_poll = False
     _attr_device_class = SensorDeviceClass.ENUM
-    _attr_options = ["inactive", "ok", "protecting", "blocked"]
+    _attr_options = ["Inactive", "Ok", "Protecting", "Blocked"]
     _attr_icon = "mdi:shield-check"
 
     def __init__(self, data, entry_id: str) -> None:
@@ -269,7 +269,7 @@ class KostalEMSChargeLimitSensor(SensorEntity):
 
     @property
     def native_value(self) -> float | None:
-        if self._data.ems_status == "inactive":
+        if self._data.ems_status == "Inactive":
             return None
         return self._data.ems_charge_limit_watts
 

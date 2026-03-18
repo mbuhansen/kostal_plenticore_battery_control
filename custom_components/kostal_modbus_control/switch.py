@@ -365,11 +365,11 @@ class KostalEMSSwitch(KostalBaseSwitch):
         target_watts = round(self._ems_smoothed_limit, 0)
 
         if target_watts == 0.0:
-            new_status = "blocked"
+            new_status = "Blocked"
         elif target_watts < self._data.charge_rate:
-            new_status = "protecting"
+            new_status = "Protecting"
         else:
-            new_status = "ok"
+            new_status = "Ok"
 
         _LOGGER.debug(
             "EMS: phase=%.1f/%.1f/%.1f A, fuse=%sA, headroom=%.0f/%.0f/%.0f W → raw=%.0f W smooth=%.0f W (%s)",
@@ -388,9 +388,9 @@ class KostalEMSSwitch(KostalBaseSwitch):
     async def _stop_action(self) -> None:
         self._ems_smoothed_limit = None  # Reset EMA when EMS is turned off
         self._data.ems_charge_limit_watts = 15000.0
-        self._data.ems_status = "inactive"
+        self._data.ems_status = "Inactive"
         async_dispatcher_send(
-            self.hass, f"{SIGNAL_EMS_STATUS_UPDATED}_{self._entry_id}", "inactive"
+            self.hass, f"{SIGNAL_EMS_STATUS_UPDATED}_{self._entry_id}", "Inactive"
         )
         # EMS does NOT write to Modbus — nothing is written unless a charge switch is active
 

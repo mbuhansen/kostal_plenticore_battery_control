@@ -86,7 +86,7 @@ class KostalData:
     fuse_size: float = 25.0
     last_stop_time: float = 0.0
     inverter_timeout: int = DEFAULT_MODBUS_TIMEOUT
-    ems_status: str = "inactive"
+    ems_status: str = "Inactive"
     ems_charge_limit_watts: float = 15000.0
 
 
