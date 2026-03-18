@@ -44,7 +44,7 @@ class KostalCoordinator(DataUpdateCoordinator):
     def __init__(self, hass: HomeAssistant, handler: KostalModbusHandler, kostal_data: "KostalData") -> None:
         super().__init__(
             hass,
-            _LOGGER,
+            logging.getLogger(f"{__name__}.coordinator"),
             name=DOMAIN,
             update_interval=timedelta(seconds=LOOP_INTERVAL),
         )
