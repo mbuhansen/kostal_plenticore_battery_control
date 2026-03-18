@@ -299,6 +299,7 @@ class KostalEMSSwitch(KostalBaseSwitch):
     def __init__(self, data, entry_id, charge_start_switch):
         super().__init__(data, entry_id)
         self._charge_start_switch = charge_start_switch
+        self._ems_smoothed_limit: float | None = None  # EMA state
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on EMS — blocked if no smart meter is detected."""
@@ -339,19 +340,29 @@ class KostalEMSSwitch(KostalBaseSwitch):
         fuse_size = self._data.fuse_size
         safe_limit_amps = fuse_size * EMS_SAFETY_MARGIN
 
-        # Available headroom per phase in watts (abs() handles bidirectional current)
+        # Available headroom per phase in watts.
+        # Kostal charges equally across all 3 phases, so headroom = amps_left × 3 × voltage.
         headroom_watts = [
-            (safe_limit_amps - abs(phase1)) * EMS_PHASE_VOLTAGE,
-            (safe_limit_amps - abs(phase2)) * EMS_PHASE_VOLTAGE,
-            (safe_limit_amps - abs(phase3)) * EMS_PHASE_VOLTAGE,
+            (safe_limit_amps - abs(phase1)) * 3 * EMS_PHASE_VOLTAGE,
+            (safe_limit_amps - abs(phase2)) * 3 * EMS_PHASE_VOLTAGE,
+            (safe_limit_amps - abs(phase3)) * 3 * EMS_PHASE_VOLTAGE,
         ]
 
         # Most constrained phase limits charge power
         max_charge_watts = min(headroom_watts)
 
         # Clamp: 0 minimum (never discharge), use charge_rate as ceiling
-        # Result is stored as ems_charge_limit_watts; Charge Start applies it when writing
-        target_watts = max(0.0, min(max_charge_watts, self._data.charge_rate))
+        raw_watts = max(0.0, min(max_charge_watts, self._data.charge_rate))
+
+        # Exponential moving average (α=0.3) to prevent oscillation.
+        # First cycle: seed with the raw value so we react immediately.
+        EMA_ALPHA = 0.3
+        if self._ems_smoothed_limit is None:
+            self._ems_smoothed_limit = raw_watts
+        else:
+            self._ems_smoothed_limit = EMA_ALPHA * raw_watts + (1 - EMA_ALPHA) * self._ems_smoothed_limit
+
+        target_watts = round(self._ems_smoothed_limit, 0)
 
         if target_watts == 0.0:
             new_status = "blocked"
@@ -361,10 +372,10 @@ class KostalEMSSwitch(KostalBaseSwitch):
             new_status = "ok"
 
         _LOGGER.debug(
-            "EMS: phase=%.1f/%.1f/%.1f A, fuse=%sA, headroom=%.0f/%.0f/%.0f W → charge=%.0f W (%s)",
+            "EMS: phase=%.1f/%.1f/%.1f A, fuse=%sA, headroom=%.0f/%.0f/%.0f W → raw=%.0f W smooth=%.0f W (%s)",
             phase1, phase2, phase3, fuse_size,
             headroom_watts[0], headroom_watts[1], headroom_watts[2],
-            target_watts, new_status,
+            raw_watts, target_watts, new_status,
         )
 
         self._data.ems_charge_limit_watts = target_watts
@@ -375,7 +386,8 @@ class KostalEMSSwitch(KostalBaseSwitch):
         # EMS does NOT write to Modbus — Charge Start is the sole writer to 1034
 
     async def _stop_action(self) -> None:
-        self._data.ems_charge_limit_watts = 15000.0  # Reset to unconstrained
+        self._ems_smoothed_limit = None  # Reset EMA when EMS is turned off
+        self._data.ems_charge_limit_watts = 15000.0
         self._data.ems_status = "inactive"
         async_dispatcher_send(
             self.hass, f"{SIGNAL_EMS_STATUS_UPDATED}_{self._entry_id}", "inactive"
