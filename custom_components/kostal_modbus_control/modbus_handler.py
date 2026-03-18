@@ -47,7 +47,6 @@ class KostalModbusHandler:
     async def _safe_read(self, address, count):
         """Read holding registers with auto-detected unit_id parameter name."""
         self._detect_unit_kwarg()
-        self._logger.debug("READ address=%s count=%s unit_id=%s (kwarg=%s)", address, count, self._unit_id, self._unit_kwarg)
         kwargs = {"count": count}
         if self._unit_kwarg:
             kwargs[self._unit_kwarg] = self._unit_id
@@ -56,7 +55,6 @@ class KostalModbusHandler:
     async def _safe_write(self, address, values):
         """Write registers with auto-detected unit_id parameter name."""
         self._detect_unit_kwarg()
-        self._logger.debug("WRITE address=%s values=%s unit_id=%s", address, values, self._unit_id)
         kwargs = {"values": values}
         if self._unit_kwarg:
             kwargs[self._unit_kwarg] = self._unit_id
@@ -112,6 +110,20 @@ class KostalModbusHandler:
                 return struct.unpack(">h", raw)[0]
             except Exception as e:
                 self._logger.error(f"Exception reading int16 from {address}: {e}")
+                return None
+
+    async def read_uint8(self, address):
+        """Reads an unsigned 8-bit value from the low byte of one register."""
+        await self.connect()
+        async with self._lock:
+            try:
+                result = await self._safe_read(address, 1)
+                if result.isError():
+                    self._logger.error(f"Error reading uint8 from {address}: {result}")
+                    return None
+                return result.registers[0] & 0xFF
+            except Exception as e:
+                self._logger.error(f"Exception reading uint8 from {address}: {e}")
                 return None
 
     async def write_float(self, address, value):

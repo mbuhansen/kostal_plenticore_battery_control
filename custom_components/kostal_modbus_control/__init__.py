@@ -25,6 +25,10 @@ from .const import (
     REG_BATTERY_TEMP,
     REG_BATTERY_MAX_CHARGE_LIMIT,
     REG_BATTERY_MAX_DISCHARGE_LIMIT,
+    REG_CURRENT_PHASE1,
+    REG_CURRENT_PHASE2,
+    REG_CURRENT_PHASE3,
+    REG_SENSOR_TYPE,
 )
 from .modbus_handler import KostalModbusHandler
 
@@ -37,7 +41,7 @@ class KostalCoordinator(DataUpdateCoordinator):
     def __init__(self, hass: HomeAssistant, handler: KostalModbusHandler, kostal_data: "KostalData") -> None:
         super().__init__(
             hass,
-            _LOGGER,
+            logging.getLogger(f"{__name__}.coordinator"),
             name=DOMAIN,
             update_interval=timedelta(seconds=LOOP_INTERVAL),
         )
@@ -54,14 +58,15 @@ class KostalCoordinator(DataUpdateCoordinator):
                 REG_BATTERY_TEMP,
                 REG_BATTERY_MAX_CHARGE_LIMIT,
                 REG_BATTERY_MAX_DISCHARGE_LIMIT,
+                REG_CURRENT_PHASE1,
+                REG_CURRENT_PHASE2,
+                REG_CURRENT_PHASE3,
             ):
                 data[address] = await self._handler.read_float(address)
             # S16 register (1 register, signed int)
             data[REG_BATTERY_POWER] = await self._handler.read_int16(REG_BATTERY_POWER)
-            if (val := data.get(REG_BATTERY_MAX_CHARGE_LIMIT)) is not None:
-                self._kostal_data.current_max_charge_watts = val
-            if (val := data.get(REG_BATTERY_MAX_DISCHARGE_LIMIT)) is not None:
-                self._kostal_data.current_max_discharge_watts = val
+            # U8 register (sensor type)
+            data[REG_SENSOR_TYPE] = await self._handler.read_uint8(REG_SENSOR_TYPE)
             return data
         except Exception as err:
             raise UpdateFailed(f"Error communicating with Kostal inverter: {err}") from err
@@ -75,10 +80,11 @@ class KostalData:
     coordinator: KostalCoordinator | None = None
     charge_rate: float = 5000.0
     discharge_rate: float = 5000.0
+    fuse_size: float = 25.0
     last_stop_time: float = 0.0
     inverter_timeout: int = DEFAULT_MODBUS_TIMEOUT
-    current_max_charge_watts: float = 0.0
-    current_max_discharge_watts: float = 0.0
+    ems_status: str = "Inactive"
+    ems_charge_limit_watts: float = 15000.0
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -100,12 +106,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Register device with static info (string registers are not reliable via Modbus on all firmware)
     device_registry = dr.async_get(hass)
+    device_name = entry.data.get("device_name") or f"Kostal Inverter {host}"
     device_registry.async_get_or_create(
         config_entry_id=entry.entry_id,
         identifiers={(DOMAIN, entry.entry_id)},
         manufacturer="Kostal",
         model="Plenticore",
-        name=f"Kostal Inverter {host}",
+        name=device_name,
     )
     
     data = KostalData(handler=handler, inverter_timeout=timeout)
