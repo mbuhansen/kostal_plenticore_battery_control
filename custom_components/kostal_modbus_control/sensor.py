@@ -15,7 +15,7 @@ from homeassistant.const import (
     UnitOfElectricCurrent,
     UnitOfTemperature,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity import DeviceInfo
@@ -240,5 +240,6 @@ class KostalEMSStatusSensor(SensorEntity):
             )
         )
 
+    @callback
     def _handle_status_update(self, status: str) -> None:
         self.async_write_ha_state()
