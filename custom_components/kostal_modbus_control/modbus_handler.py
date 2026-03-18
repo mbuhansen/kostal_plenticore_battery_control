@@ -47,7 +47,6 @@ class KostalModbusHandler:
     async def _safe_read(self, address, count):
         """Read holding registers with auto-detected unit_id parameter name."""
         self._detect_unit_kwarg()
-        self._logger.debug("READ address=%s count=%s unit_id=%s (kwarg=%s)", address, count, self._unit_id, self._unit_kwarg)
         kwargs = {"count": count}
         if self._unit_kwarg:
             kwargs[self._unit_kwarg] = self._unit_id
@@ -56,7 +55,6 @@ class KostalModbusHandler:
     async def _safe_write(self, address, values):
         """Write registers with auto-detected unit_id parameter name."""
         self._detect_unit_kwarg()
-        self._logger.debug("WRITE address=%s values=%s unit_id=%s", address, values, self._unit_id)
         kwargs = {"values": values}
         if self._unit_kwarg:
             kwargs[self._unit_kwarg] = self._unit_id
