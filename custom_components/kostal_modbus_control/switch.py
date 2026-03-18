@@ -12,7 +12,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.dispatcher import async_dispatcher_send
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import (
@@ -305,6 +305,7 @@ class KostalBlockChargeSwitch(KostalBaseSwitch):
 class KostalEMSSwitch(KostalBaseSwitch):
     _key = SWITCH_EMS
     _name = "EMS Grid Protection"
+    _attr_entity_category = EntityCategory.CONFIG
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on EMS — blocked if no smart meter is detected."""
@@ -391,6 +392,7 @@ class KostalPredbatControlSwitch(KostalBaseSwitch, RestoreEntity):
 
     _key = SWITCH_PREDBAT_CONTROL
     _name = "Predbat Control"
+    _attr_entity_category = EntityCategory.CONFIG
 
     async def async_added_to_hass(self) -> None:
         """Restore on/off state after HA restart."""

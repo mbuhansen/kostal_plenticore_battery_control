@@ -6,7 +6,7 @@ from homeassistant.components.number import NumberEntity, RestoreNumber
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import KostalCoordinator
@@ -111,6 +111,7 @@ class KostalFuseSizeNumber(RestoreNumber):
     _attr_mode = "box"
     _attr_name = "House Fuse Size"
     _attr_icon = "mdi:fuse"
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(self, data, entry_id: str) -> None:
         self._data = data
