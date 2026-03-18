@@ -113,6 +113,9 @@ class KostalBaseSwitch(SwitchEntity):
             if not self._attr_is_on:
                 return
 
+        # Kør pre-start (f.eks. nulstil 1038/1040) først efter eventuel ventetid,
+        # så ingen Modbus-besked nulstiller inverterens 1034-timeout under ventetiden.
+        await self._pre_start_action()
         await self._loop_action()
         if self._attr_is_on:
             self._remove_timer = async_track_time_interval(
@@ -127,11 +130,11 @@ class KostalBaseSwitch(SwitchEntity):
         
         self._attr_is_on = False
         await self._stop_action()
-        
-        # Update stop time
-        self._data.last_stop_time = time.time()
-        
         self.async_write_ha_state()
+
+    async def _pre_start_action(self):
+        """Køres straks ved start, inden eventuel ventetid på 1034."""
+        pass
 
     async def _loop_action(self, *args):
         """Action performed periodically."""
@@ -245,10 +248,16 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                 self._predbat_discharge_blocked = False
                 await self._data.handler.write_float(REG_DISCHARGE_RATE, self._data.discharge_rate)
 
+    async def _pre_start_action(self):
+        # Nulstil rate-registre til max straks — ingen ventetid nødvendig
+        await self._data.handler.write_float(REG_CHARGE_RATE, self._data.charge_rate)
+        await self._data.handler.write_float(REG_DISCHARGE_RATE, self._data.discharge_rate)
+
     async def _stop_action(self):
         # Send 0 as final command so inverter stops charging immediately.
         # After this nothing is written to 1034 until a new switch starts.
         await self._data.handler.write_float(REG_POWER_LIMIT_W, 0.0)
+        self._data.last_stop_time = time.time()
         if self._predbat_discharge_blocked:
             self._predbat_discharge_blocked = False
             await self._data.handler.write_float(REG_DISCHARGE_RATE, self._data.discharge_rate)
@@ -259,12 +268,18 @@ class KostalDischargeStartSwitch(KostalBaseSwitch):
     _key = SWITCH_DISCHARGE_START
     _name = "Discharge Start"
 
+    async def _pre_start_action(self):
+        # Nulstil rate-registre til max straks — ingen ventetid nødvendig
+        await self._data.handler.write_float(REG_CHARGE_RATE, self._data.charge_rate)
+        await self._data.handler.write_float(REG_DISCHARGE_RATE, self._data.discharge_rate)
+
     async def _loop_action(self, *args):
         await self._data.handler.write_float(REG_POWER_LIMIT_W, abs(self._data.discharge_rate))
 
     async def _stop_action(self):
         # Write 0 stop discharge
         await self._data.handler.write_float(REG_POWER_LIMIT_W, 0.0)
+        self._data.last_stop_time = time.time()
 
 class KostalBlockDischargeSwitch(KostalBaseSwitch):
     _key = SWITCH_BLOCK_DISCHARGE
