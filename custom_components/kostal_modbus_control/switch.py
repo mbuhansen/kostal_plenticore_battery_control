@@ -164,7 +164,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                 await self._data.handler.write_float(REG_DISCHARGE_RATE, self._data.discharge_rate)
             # Apply EMS ceiling if active
             target_watts = self._data.charge_rate
-            if self._data.ems_status != "inactive":
+            if self._data.ems_status != "Inactive":
                 target_watts = min(target_watts, self._data.ems_charge_limit_watts)
             await self._data.handler.write_float(REG_POWER_LIMIT_W, -abs(target_watts))
 
@@ -179,7 +179,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                 self._predbat_transition_time = None
                 self._predbat_was_charging = True
             charge_watts = abs(self._data.charge_rate)
-            if self._data.ems_status != "inactive":
+            if self._data.ems_status != "Inactive":
                 charge_watts = min(charge_watts, self._data.ems_charge_limit_watts)
             await self._data.handler.write_float(REG_POWER_LIMIT_W, -charge_watts)
             return
