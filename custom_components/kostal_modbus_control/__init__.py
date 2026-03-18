@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_HOST, CONF_PORT, Platform
+from homeassistant.const import CONF_HOST, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr
@@ -30,12 +30,9 @@ from .const import (
     REG_CURRENT_PHASE3,
     REG_SENSOR_TYPE,
 )
-import pymodbus
-
 from .modbus_handler import KostalModbusHandler
 
 _LOGGER = logging.getLogger(__name__)
-_LOGGER.warning("pymodbus version: %s", pymodbus.__version__)
 
 
 class KostalCoordinator(DataUpdateCoordinator):
@@ -95,7 +92,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
 
     host = entry.data[CONF_HOST]
-    port = entry.data.get(CONF_PORT, DEFAULT_PORT)
+    port = DEFAULT_PORT  # Always 1502 for Plenticore
     unit_id = DEFAULT_UNIT_ID  # Always 71 for Plenticore battery management
     timeout = entry.data.get(CONF_MODBUS_TIMEOUT, DEFAULT_MODBUS_TIMEOUT)
 
