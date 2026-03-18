@@ -109,12 +109,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Register device with static info (string registers are not reliable via Modbus on all firmware)
     device_registry = dr.async_get(hass)
+    device_name = entry.data.get("device_name") or f"Kostal Inverter {host}"
     device_registry.async_get_or_create(
         config_entry_id=entry.entry_id,
         identifiers={(DOMAIN, entry.entry_id)},
         manufacturer="Kostal",
         model="Plenticore",
-        name=f"Kostal Inverter {host}",
+        name=device_name,
     )
     
     data = KostalData(handler=handler, inverter_timeout=timeout)

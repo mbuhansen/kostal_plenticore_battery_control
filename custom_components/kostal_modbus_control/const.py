@@ -4,6 +4,7 @@ DOMAIN = "kostal_modbus_control"
 CONF_PORT = "port"
 CONF_UNIT_ID = "unit_id"
 CONF_MODBUS_TIMEOUT = "modbus_timeout"  # The configured timeout on the inverter
+CONF_DEVICE_NAME = "device_name"
 
 DEFAULT_PORT = 1502
 DEFAULT_UNIT_ID = 71
