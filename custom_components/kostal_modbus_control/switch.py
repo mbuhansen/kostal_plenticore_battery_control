@@ -57,7 +57,7 @@ async def async_setup_entry(
         KostalDischargeStartSwitch(data, entry.entry_id),
         KostalBlockDischargeSwitch(data, entry.entry_id),
         KostalBlockChargeSwitch(data, entry.entry_id),
-        KostalEMSSwitch(data, entry.entry_id),
+        KostalEMSSwitch(data, entry.entry_id, charge_start_switch),
         predbat_switch,
     ]
     async_add_entities(entities)
@@ -162,12 +162,10 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                 self._predbat_was_charging = None
                 self._predbat_transition_time = None
                 await self._data.handler.write_float(REG_DISCHARGE_RATE, self._data.discharge_rate)
-            # Original behavior: write -charge_rate to reg 1034
-            user_watts = self._data.charge_rate
-            max_limit = self._data.current_max_charge_watts
-            target_watts = user_watts
-            if max_limit > 0:
-                target_watts = min(user_watts, max_limit)
+            # Apply EMS ceiling if active
+            target_watts = self._data.charge_rate
+            if self._data.ems_status != "inactive":
+                target_watts = min(target_watts, self._data.ems_charge_limit_watts)
             await self._data.handler.write_float(REG_POWER_LIMIT_W, -abs(target_watts))
 
     async def _predbat_loop_action(self) -> None:
@@ -180,7 +178,10 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                 _LOGGER.info("Predbat Control: predbat_charging ON — charging")
                 self._predbat_transition_time = None
                 self._predbat_was_charging = True
-            await self._data.handler.write_float(REG_POWER_LIMIT_W, -abs(self._data.charge_rate))
+            charge_watts = abs(self._data.charge_rate)
+            if self._data.ems_status != "inactive":
+                charge_watts = min(charge_watts, self._data.ems_charge_limit_watts)
+            await self._data.handler.write_float(REG_POWER_LIMIT_W, -charge_watts)
             return
 
         # Not charging
@@ -257,19 +258,7 @@ class KostalDischargeStartSwitch(KostalBaseSwitch):
     _name = "Discharge Start"
 
     async def _loop_action(self, *args):
-        # User defined watts
-        user_watts = self._data.discharge_rate
-        # Max limit from battery sensor
-        max_limit = self._data.current_max_discharge_watts
-        
-        # Clamp to max limit if available (greater than 0)
-        target_watts = user_watts
-        if max_limit > 0:
-            target_watts = min(user_watts, max_limit)
-
-        # Write positive target watts to 1034 (Discharge)
-        val_to_write = abs(target_watts)
-        await self._data.handler.write_float(REG_POWER_LIMIT_W, val_to_write)
+        await self._data.handler.write_float(REG_POWER_LIMIT_W, abs(self._data.discharge_rate))
 
     async def _stop_action(self):
         # Write 0 stop discharge
@@ -307,6 +296,10 @@ class KostalEMSSwitch(KostalBaseSwitch):
     _name = "EMS Grid Protection"
     _attr_entity_category = EntityCategory.CONFIG
 
+    def __init__(self, data, entry_id, charge_start_switch):
+        super().__init__(data, entry_id)
+        self._charge_start_switch = charge_start_switch
+
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on EMS — blocked if no smart meter is detected."""
         coordinator = self._data.coordinator
@@ -325,11 +318,13 @@ class KostalEMSSwitch(KostalBaseSwitch):
         await super().async_turn_on(**kwargs)
 
     async def _loop_action(self, *args) -> None:
-        """Calculate max safe charge power based on grid phase currents."""
+        """Calculate max safe charge power — only when Charge Start is active."""
+        if not self._charge_start_switch.is_on:
+            return
+
         coordinator = self._data.coordinator
         if coordinator is None or coordinator.data is None:
-            _LOGGER.warning("EMS: No coordinator data — stopping charge as safety measure")
-            await self._data.handler.write_float(REG_POWER_LIMIT_W, 0.0)
+            _LOGGER.warning("EMS: No coordinator data — skipping cycle")
             return
 
         data = coordinator.data
@@ -338,8 +333,7 @@ class KostalEMSSwitch(KostalBaseSwitch):
         phase3 = data.get(REG_CURRENT_PHASE3)
 
         if phase1 is None or phase2 is None or phase3 is None:
-            _LOGGER.warning("EMS: Phase current read failed — stopping charge as safety measure")
-            await self._data.handler.write_float(REG_POWER_LIMIT_W, 0.0)
+            _LOGGER.warning("EMS: Phase current read failed — skipping cycle")
             return
 
         fuse_size = self._data.fuse_size
@@ -355,7 +349,8 @@ class KostalEMSSwitch(KostalBaseSwitch):
         # Most constrained phase limits charge power
         max_charge_watts = min(headroom_watts)
 
-        # Clamp: 0 minimum (never discharge), user charge rate as maximum
+        # Clamp: 0 minimum (never discharge), use charge_rate as ceiling
+        # Result is stored as ems_charge_limit_watts; Charge Start applies it when writing
         target_watts = max(0.0, min(max_charge_watts, self._data.charge_rate))
 
         if target_watts == 0.0:
@@ -372,19 +367,20 @@ class KostalEMSSwitch(KostalBaseSwitch):
             target_watts, new_status,
         )
 
+        self._data.ems_charge_limit_watts = target_watts
         self._data.ems_status = new_status
         async_dispatcher_send(
             self.hass, f"{SIGNAL_EMS_STATUS_UPDATED}_{self._entry_id}", new_status
         )
-
-        await self._data.handler.write_float(REG_POWER_LIMIT_W, -target_watts)
+        # EMS does NOT write to Modbus — Charge Start is the sole writer to 1034
 
     async def _stop_action(self) -> None:
+        self._data.ems_charge_limit_watts = 15000.0  # Reset to unconstrained
         self._data.ems_status = "inactive"
         async_dispatcher_send(
             self.hass, f"{SIGNAL_EMS_STATUS_UPDATED}_{self._entry_id}", "inactive"
         )
-        await self._data.handler.write_float(REG_POWER_LIMIT_W, 0.0)
+        # EMS does NOT write to Modbus — nothing is written unless a charge switch is active
 
 
 class KostalPredbatControlSwitch(KostalBaseSwitch, RestoreEntity):

@@ -45,6 +45,7 @@ from .const import (
     SENSOR_CURRENT_PHASE3,
     SENSOR_SENSOR_TYPE,
     SENSOR_EMS_STATUS,
+    SENSOR_EMS_CHARGE_LIMIT,
     SENSOR_TYPE_MAP,
     SIGNAL_EMS_STATUS_UPDATED,
 )
@@ -72,6 +73,7 @@ async def async_setup_entry(
         KostalCurrentPhase3Sensor(coordinator, entry.entry_id),
         KostalSensorTypeSensor(coordinator, entry.entry_id),
         KostalEMSStatusSensor(data, entry.entry_id),
+        KostalEMSChargeLimitSensor(data, entry.entry_id),
     ]
 
     async_add_entities(entities)
@@ -230,6 +232,46 @@ class KostalEMSStatusSensor(SensorEntity):
     @property
     def native_value(self) -> str:
         return self._data.ems_status
+
+    async def async_added_to_hass(self) -> None:
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass,
+                f"{SIGNAL_EMS_STATUS_UPDATED}_{self._entry_id}",
+                self._handle_status_update,
+            )
+        )
+
+    @callback
+    def _handle_status_update(self, status: str) -> None:
+        self.async_write_ha_state()
+
+
+class KostalEMSChargeLimitSensor(SensorEntity):
+    """Sensor showing the charge power limit calculated by EMS."""
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "W"
+    _attr_icon = "mdi:lightning-bolt"
+
+    def __init__(self, data, entry_id: str) -> None:
+        self._data = data
+        self._entry_id = entry_id
+        self._attr_unique_id = f"{entry_id}_{SENSOR_EMS_CHARGE_LIMIT}"
+        self._attr_name = "EMS Charge Limit"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(identifiers={(DOMAIN, self._entry_id)})
+
+    @property
+    def native_value(self) -> float | None:
+        if self._data.ems_status == "inactive":
+            return None
+        return self._data.ems_charge_limit_watts
 
     async def async_added_to_hass(self) -> None:
         self.async_on_remove(

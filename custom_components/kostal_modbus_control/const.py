@@ -53,6 +53,7 @@ SENSOR_CURRENT_PHASE2 = "current_phase2"
 SENSOR_CURRENT_PHASE3 = "current_phase3"
 SENSOR_SENSOR_TYPE = "sensor_type"
 SENSOR_EMS_STATUS = "ems_status"
+SENSOR_EMS_CHARGE_LIMIT = "ems_charge_limit"
 
 # Dispatcher signal for EMS status updates (append _{entry_id} when used)
 SIGNAL_EMS_STATUS_UPDATED = "kostal_modbus_ems_status"
