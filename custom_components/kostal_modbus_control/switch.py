@@ -341,21 +341,23 @@ class KostalEMSSwitch(KostalBaseSwitch):
         safe_limit_amps = fuse_size * EMS_SAFETY_MARGIN
 
         # Available headroom per phase in watts.
-        # Kostal charges equally across all 3 phases, so headroom = amps_left × 3 × voltage.
-        headroom_watts = [
-            (safe_limit_amps - abs(phase1)) * 3 * EMS_PHASE_VOLTAGE,
-            (safe_limit_amps - abs(phase2)) * 3 * EMS_PHASE_VOLTAGE,
-            (safe_limit_amps - abs(phase3)) * 3 * EMS_PHASE_VOLTAGE,
-        ]
+        # Only positive (import) current reduces headroom — negative current means grid export
+        # from solar, which poses no fuse risk; battery charging would just reduce that export.
+        # Kostal distributes charge equally across 3 phases (headroom × 3 × voltage).
+        headroom_watts = min(
+            (safe_limit_amps - max(0.0, phase1)) * 3 * EMS_PHASE_VOLTAGE,
+            (safe_limit_amps - max(0.0, phase2)) * 3 * EMS_PHASE_VOLTAGE,
+            (safe_limit_amps - max(0.0, phase3)) * 3 * EMS_PHASE_VOLTAGE,
+        )
 
-        # Most constrained phase limits charge power
-        max_charge_watts = min(headroom_watts)
+        # The smart meter already includes current battery charging in its reading.
+        # headroom_watts is therefore a DELTA — how much more we can safely add.
+        # New target = previous limit + headroom, clamped to [0, charge_rate].
+        # First cycle: assume charge_rate as baseline so we start from the top.
+        prev_limit = self._ems_smoothed_limit if self._ems_smoothed_limit is not None else self._data.charge_rate
+        raw_watts = max(0.0, min(prev_limit + headroom_watts, self._data.charge_rate))
 
-        # Clamp: 0 minimum (never discharge), use charge_rate as ceiling
-        raw_watts = max(0.0, min(max_charge_watts, self._data.charge_rate))
-
-        # Exponential moving average (α=0.3) to prevent oscillation.
-        # First cycle: seed with the raw value so we react immediately.
+        # EMA filter (α=0.3) to smooth measurement noise without causing oscillation.
         EMA_ALPHA = 0.3
         if self._ems_smoothed_limit is None:
             self._ems_smoothed_limit = raw_watts
@@ -372,9 +374,9 @@ class KostalEMSSwitch(KostalBaseSwitch):
             new_status = "Ok"
 
         _LOGGER.debug(
-            "EMS: phase=%.1f/%.1f/%.1f A, fuse=%sA, headroom=%.0f/%.0f/%.0f W → raw=%.0f W smooth=%.0f W (%s)",
+            "EMS: phase=%.1f/%.1f/%.1f A, fuse=%sA, headroom=%.0f W → raw=%.0f W smooth=%.0f W (%s)",
             phase1, phase2, phase3, fuse_size,
-            headroom_watts[0], headroom_watts[1], headroom_watts[2],
+            headroom_watts,
             raw_watts, target_watts, new_status,
         )
 
