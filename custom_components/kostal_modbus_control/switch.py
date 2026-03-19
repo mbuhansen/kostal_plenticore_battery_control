@@ -207,9 +207,10 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
             return
 
         if self._predbat_was_charging is None:
-            # First tick and already not charging — no transition delay needed
+            # First tick — wait 15s for predbat_charging to settle, then decide immediately
+            _LOGGER.info("Predbat Control: starting — waiting 15s for predbat_charging to settle")
             self._predbat_was_charging = False
-            self._predbat_transition_time = 0.0
+            self._predbat_transition_time = time.time() - 30.0  # 45-30 = 15s remaining
 
         # Check 45s wait after charge stopped
         elapsed = time.time() - (self._predbat_transition_time or 0.0)
