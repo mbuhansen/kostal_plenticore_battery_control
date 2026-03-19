@@ -13,12 +13,11 @@ from homeassistant.const import (
     UnitOfPower,
     UnitOfElectricPotential,
     UnitOfElectricCurrent,
-    UnitOfTemperature,
-)
+    UnitOfTemperature,    UnitOfEnergy,)
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import KostalCoordinator
@@ -30,6 +29,16 @@ from .const import (
     REG_BATTERY_TEMP,
     REG_BATTERY_MAX_CHARGE_LIMIT,
     REG_BATTERY_MAX_DISCHARGE_LIMIT,
+    REG_BATTERY_WORK_CAPACITY,
+    REG_BATTERY_SERIAL,
+    REG_BATTERY_MGMT_MODE,
+    REG_BATTERY_TYPE,
+    REG_BATTERY_CHARGE_CURRENT,
+    REG_BATTERY_CYCLES,
+    REG_BATTERY_GROSS_CAPACITY,
+    REG_BATTERY_MODEL_ID,
+    REG_BATTERY_BMS_SERIAL,
+    REG_BATTERY_FIRMWARE,
     REG_CURRENT_PHASE1,
     REG_CURRENT_PHASE2,
     REG_CURRENT_PHASE3,
@@ -46,6 +55,17 @@ from .const import (
     SENSOR_SENSOR_TYPE,
     SENSOR_EMS_STATUS,
     SENSOR_EMS_CHARGE_LIMIT,
+    SENSOR_BATTERY_WORK_CAPACITY,
+    SENSOR_BATTERY_SERIAL,
+    SENSOR_BATTERY_MGMT_MODE,
+    SENSOR_BATTERY_TYPE,
+    SENSOR_BATTERY_FIRMWARE,
+    SENSOR_BATTERY_BMS_SERIAL,
+    SENSOR_BATTERY_MODEL_ID,
+    SENSOR_BATTERY_GROSS_CAPACITY,
+    SENSOR_BATTERY_CYCLES,
+    SENSOR_BATTERY_CHARGE_CURRENT,
+    BATTERY_TYPE_MAP,
     SENSOR_TYPE_MAP,
     SIGNAL_EMS_STATUS_UPDATED,
 )
@@ -74,6 +94,19 @@ async def async_setup_entry(
         KostalSensorTypeSensor(coordinator, entry.entry_id),
         KostalEMSStatusSensor(data, entry.entry_id),
         KostalEMSChargeLimitSensor(data, entry.entry_id),
+        # Diagnostic sensors (disabled by default)
+        KostalBatteryWorkCapacitySensor(coordinator, entry.entry_id),
+        KostalBatterySerialSensor(coordinator, entry.entry_id),
+        KostalBatteryMgmtModeSensor(coordinator, entry.entry_id),
+        # Diagnostic sensors (enabled by default)
+        KostalBatteryTypeSensor(coordinator, entry.entry_id),
+        # Diagnostic sensors (disabled by default) - extended battery info
+        KostalBatteryFirmwareSensor(coordinator, entry.entry_id),
+        KostalBatteryBmsSerialSensor(coordinator, entry.entry_id),
+        KostalBatteryModelIdSensor(coordinator, entry.entry_id),
+        KostalBatteryGrossCapacitySensor(coordinator, entry.entry_id),
+        KostalBatteryCyclesSensor(coordinator, entry.entry_id),
+        KostalBatteryChargeCurrentSensor(coordinator, entry.entry_id),
     ]
 
     async_add_entities(entities)
@@ -199,6 +232,7 @@ class KostalSensorTypeSensor(KostalBaseSensor):
     _attr_device_class = None
     _attr_native_unit_of_measurement = None
     _attr_state_class = None
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     @property
     def native_value(self):
@@ -285,3 +319,155 @@ class KostalEMSChargeLimitSensor(SensorEntity):
     @callback
     def _handle_status_update(self, status: str) -> None:
         self.async_write_ha_state()
+
+
+class KostalBatteryWorkCapacitySensor(KostalBaseSensor):
+    _key = SENSOR_BATTERY_WORK_CAPACITY
+    _name = "Battery Work Capacity"
+    _address = REG_BATTERY_WORK_CAPACITY
+    _attr_device_class = SensorDeviceClass.ENERGY_STORAGE
+    _attr_native_unit_of_measurement = UnitOfEnergy.WATT_HOUR
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+
+class KostalBatterySerialSensor(KostalBaseSensor):
+    _key = SENSOR_BATTERY_SERIAL
+    _name = "Battery Serial Number"
+    _address = REG_BATTERY_SERIAL
+    _attr_device_class = None
+    _attr_native_unit_of_measurement = None
+    _attr_state_class = None
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+    @property
+    def native_value(self):
+        if self.coordinator.data is None:
+            return None
+        val = self.coordinator.data.get(self._address)
+        return str(val) if val is not None else None
+
+
+class KostalBatteryMgmtModeSensor(KostalBaseSensor):
+    _key = SENSOR_BATTERY_MGMT_MODE
+    _name = "Battery Management Mode"
+    _address = REG_BATTERY_MGMT_MODE
+    _attr_device_class = None
+    _attr_native_unit_of_measurement = None
+    _attr_state_class = None
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+    @property
+    def native_value(self):
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.get(self._address)
+
+
+class KostalBatteryTypeSensor(KostalBaseSensor):
+    _key = SENSOR_BATTERY_TYPE
+    _name = "Battery Type"
+    _address = REG_BATTERY_TYPE
+    _attr_device_class = None
+    _attr_native_unit_of_measurement = None
+    _attr_state_class = None
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def native_value(self):
+        if self.coordinator.data is None:
+            return None
+        val = self.coordinator.data.get(self._address)
+        if val is None:
+            return None
+        return BATTERY_TYPE_MAP.get(val, f"Unknown (0x{val:04X})")
+
+
+class KostalBatteryFirmwareSensor(KostalBaseSensor):
+    _key = SENSOR_BATTERY_FIRMWARE
+    _name = "Battery Firmware"
+    _address = REG_BATTERY_FIRMWARE
+    _attr_device_class = None
+    _attr_native_unit_of_measurement = None
+    _attr_state_class = None
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+    @property
+    def native_value(self):
+        if self.coordinator.data is None:
+            return None
+        val = self.coordinator.data.get(self._address)
+        return f"0x{val:08X}" if val is not None else None
+
+
+class KostalBatteryBmsSerialSensor(KostalBaseSensor):
+    _key = SENSOR_BATTERY_BMS_SERIAL
+    _name = "Battery Pack Serial Number"
+    _address = REG_BATTERY_BMS_SERIAL
+    _attr_device_class = None
+    _attr_native_unit_of_measurement = None
+    _attr_state_class = None
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+    @property
+    def native_value(self):
+        if self.coordinator.data is None:
+            return None
+        val = self.coordinator.data.get(self._address)
+        return str(val) if val is not None else None
+
+
+class KostalBatteryModelIdSensor(KostalBaseSensor):
+    _key = SENSOR_BATTERY_MODEL_ID
+    _name = "Battery Model ID"
+    _address = REG_BATTERY_MODEL_ID
+    _attr_device_class = None
+    _attr_native_unit_of_measurement = None
+    _attr_state_class = None
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+    @property
+    def native_value(self):
+        if self.coordinator.data is None:
+            return None
+        val = self.coordinator.data.get(self._address)
+        return str(val) if val is not None else None
+
+
+class KostalBatteryGrossCapacitySensor(KostalBaseSensor):
+    _key = SENSOR_BATTERY_GROSS_CAPACITY
+    _name = "Battery Gross Capacity"
+    _address = REG_BATTERY_GROSS_CAPACITY
+    _attr_device_class = None
+    _attr_native_unit_of_measurement = "Ah"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+
+class KostalBatteryCyclesSensor(KostalBaseSensor):
+    _key = SENSOR_BATTERY_CYCLES
+    _name = "Battery Cycles"
+    _address = REG_BATTERY_CYCLES
+    _attr_device_class = None
+    _attr_native_unit_of_measurement = None
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+
+class KostalBatteryChargeCurrentSensor(KostalBaseSensor):
+    _key = SENSOR_BATTERY_CHARGE_CURRENT
+    _name = "Battery Charge Current"
+    _address = REG_BATTERY_CHARGE_CURRENT
+    _attr_device_class = SensorDeviceClass.CURRENT
+    _attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False

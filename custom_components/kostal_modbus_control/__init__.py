@@ -27,6 +27,11 @@ from .const import (
     REG_BATTERY_TEMP,
     REG_BATTERY_MAX_CHARGE_LIMIT,
     REG_BATTERY_MAX_DISCHARGE_LIMIT,
+    REG_BATTERY_WORK_CAPACITY,
+    REG_BATTERY_SERIAL,
+    REG_BATTERY_MGMT_MODE,
+    REG_BATTERY_TYPE,
+    BATTERY_TYPE_MAP,
     REG_CURRENT_PHASE1,
     REG_CURRENT_PHASE2,
     REG_CURRENT_PHASE3,
@@ -60,6 +65,9 @@ class KostalCoordinator(DataUpdateCoordinator):
                 REG_BATTERY_TEMP,
                 REG_BATTERY_MAX_CHARGE_LIMIT,
                 REG_BATTERY_MAX_DISCHARGE_LIMIT,
+                REG_BATTERY_WORK_CAPACITY,
+                REG_BATTERY_CHARGE_CURRENT,
+                REG_BATTERY_CYCLES,
                 REG_CURRENT_PHASE1,
                 REG_CURRENT_PHASE2,
                 REG_CURRENT_PHASE3,
@@ -67,8 +75,17 @@ class KostalCoordinator(DataUpdateCoordinator):
                 data[address] = await self._handler.read_float(address)
             # S16 register (1 register, signed int)
             data[REG_BATTERY_POWER] = await self._handler.read_int16(REG_BATTERY_POWER)
-            # U8 register (sensor type)
+            # U8 registers
             data[REG_SENSOR_TYPE] = await self._handler.read_uint8(REG_SENSOR_TYPE)
+            data[REG_BATTERY_MGMT_MODE] = await self._handler.read_uint8(REG_BATTERY_MGMT_MODE)
+            # U32 registers
+            data[REG_BATTERY_SERIAL] = await self._handler.read_uint32(REG_BATTERY_SERIAL)
+            data[REG_BATTERY_GROSS_CAPACITY] = await self._handler.read_uint32(REG_BATTERY_GROSS_CAPACITY)
+            data[REG_BATTERY_MODEL_ID] = await self._handler.read_uint32(REG_BATTERY_MODEL_ID)
+            data[REG_BATTERY_BMS_SERIAL] = await self._handler.read_uint32(REG_BATTERY_BMS_SERIAL)
+            data[REG_BATTERY_FIRMWARE] = await self._handler.read_uint32(REG_BATTERY_FIRMWARE)
+            # U16 register
+            data[REG_BATTERY_TYPE] = await self._handler.read_uint16(REG_BATTERY_TYPE)
             return data
         except Exception as err:
             raise UpdateFailed(f"Error communicating with Kostal inverter: {err}") from err
@@ -113,6 +130,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     inverter_power_class = await handler.read_string(REG_POWER_CLASS, 16) or ""
     _LOGGER.info("Inverter model=%r power_class=%r", inverter_model, inverter_power_class)
 
+    battery_type_raw = await handler.read_uint16(REG_BATTERY_TYPE)
+    battery_type_name = BATTERY_TYPE_MAP.get(battery_type_raw, f"Unknown (0x{battery_type_raw:04X})") if battery_type_raw is not None else None
+
     # Register device with static info (string registers are not reliable via Modbus on all firmware)
     device_registry = dr.async_get(hass)
     if inverter_model and inverter_power_class:
@@ -127,6 +147,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         manufacturer="Kostal",
         model=device_name,
         name=device_name,
+        hw_version=battery_type_name,
     )
     
     data = KostalData(

@@ -23,7 +23,14 @@ REG_DISCHARGE_RATE = 1040         # Battery Discharge Rate (Watts) - Positive
 REG_BATTERY_SOC = 210             # Act. state of charge (%) - Float (0xD2)
 REG_BATTERY_TEMP = 214            # Battery Temperature (°C) - Float (0xD6)
 REG_BATTERY_VOLTAGE = 216         # Battery Voltage (V) - Float (0xD8)
+REG_BATTERY_CHARGE_CURRENT = 190  # Battery charge current (A) - Float (0xBE)
+REG_BATTERY_CYCLES = 194          # Number of battery cycles - Float (0xC2)
+REG_BATTERY_GROSS_CAPACITY = 512  # Battery gross capacity (Ah) - U32 (0x200)
+REG_BATTERY_MODEL_ID = 525        # Battery Model ID - U32 (0x20D)
+REG_BATTERY_BMS_SERIAL = 527      # Battery Serial Number - U32 (0x20F)
 REG_BATTERY_POWER = 582           # Actual battery charge/discharge power (W) - S16, negative=charge
+REG_BATTERY_FIRMWARE = 586        # Battery Firmware - U32 (0x24A)
+REG_BATTERY_TYPE = 588            # Battery type - U16 (0x24C)
 
 # Read-Only Registers (Grid/Powermeter)
 REG_CURRENT_PHASE1 = 222          # Current phase 1 powermeter (A) - Float (0xDE)
@@ -41,6 +48,23 @@ SENSOR_TYPE_MAP = {
 
 REG_BATTERY_MAX_CHARGE_LIMIT = 1076    # Max Charge Limit (W) - Float
 REG_BATTERY_MAX_DISCHARGE_LIMIT = 1078 # Max Discharge Limit (W) - Float
+REG_BATTERY_WORK_CAPACITY = 1068       # Battery work capacity (Wh) - Float
+REG_BATTERY_SERIAL = 1070              # Battery serial number - U32
+REG_BATTERY_MGMT_MODE = 1080          # Battery management mode - U8
+
+BATTERY_TYPE_MAP = {
+    0x0000: "No battery (PV only)",
+    0x0002: "PIKO Battery Li",
+    0x0004: "BYD",
+    0x0008: "BMZ",
+    0x0010: "AXIstorage Li SH",
+    0x0040: "LG",
+    0x0200: "Pyontech Force H",
+    0x0400: "AXIstorage Li SV",
+    0x1000: "Dyness Tower / TowerPro",
+    0x2000: "VARTA.wall",
+    0x4000: "ZYC",
+}
 
 # Entity descriptions (Sensors)
 SENSOR_BATTERY_SOC = "battery_soc"
@@ -55,6 +79,16 @@ SENSOR_CURRENT_PHASE3 = "current_phase3"
 SENSOR_SENSOR_TYPE = "sensor_type"
 SENSOR_EMS_STATUS = "ems_status"
 SENSOR_EMS_CHARGE_LIMIT = "ems_charge_limit"
+SENSOR_BATTERY_WORK_CAPACITY = "battery_work_capacity"
+SENSOR_BATTERY_SERIAL = "battery_serial"
+SENSOR_BATTERY_MGMT_MODE = "battery_mgmt_mode"
+SENSOR_BATTERY_TYPE = "battery_type"
+SENSOR_BATTERY_FIRMWARE = "battery_firmware"
+SENSOR_BATTERY_BMS_SERIAL = "battery_bms_serial"
+SENSOR_BATTERY_MODEL_ID = "battery_model_id"
+SENSOR_BATTERY_GROSS_CAPACITY = "battery_gross_capacity"
+SENSOR_BATTERY_CYCLES = "battery_cycles"
+SENSOR_BATTERY_CHARGE_CURRENT = "battery_charge_current"
 
 # Dispatcher signal for EMS status updates (append _{entry_id} when used)
 SIGNAL_EMS_STATUS_UPDATED = "kostal_modbus_ems_status"

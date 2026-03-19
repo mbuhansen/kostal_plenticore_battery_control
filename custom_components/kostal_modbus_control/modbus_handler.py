@@ -126,6 +126,35 @@ class KostalModbusHandler:
                 self._logger.error(f"Exception reading uint8 from {address}: {e}")
                 return None
 
+    async def read_uint16(self, address):
+        """Reads an unsigned 16-bit value from one register."""
+        await self.connect()
+        async with self._lock:
+            try:
+                result = await self._safe_read(address, 1)
+                if result.isError():
+                    self._logger.error(f"Error reading uint16 from {address}: {result}")
+                    return None
+                return result.registers[0]
+            except Exception as e:
+                self._logger.error(f"Exception reading uint16 from {address}: {e}")
+                return None
+
+    async def read_uint32(self, address):
+        """Reads an unsigned 32-bit value from two 16-bit registers (big endian)."""
+        await self.connect()
+        async with self._lock:
+            try:
+                result = await self._safe_read(address, 2)
+                if result.isError():
+                    self._logger.error(f"Error reading uint32 from {address}: {result}")
+                    return None
+                raw = struct.pack(">HH", result.registers[0], result.registers[1])
+                return struct.unpack(">I", raw)[0]
+            except Exception as e:
+                self._logger.error(f"Exception reading uint32 from {address}: {e}")
+                return None
+
     async def write_float(self, address, value):
         """Writes a float value to two 16-bit registers."""
         await self.connect()
