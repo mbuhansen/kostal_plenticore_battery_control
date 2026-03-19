@@ -4,6 +4,9 @@ DOMAIN = "kostal_modbus_control"
 CONF_PORT = "port"
 CONF_UNIT_ID = "unit_id"
 CONF_MODBUS_TIMEOUT = "modbus_timeout"  # The configured timeout on the inverter
+CONF_INVERTER_TYPE = "inverter_type"
+INVERTER_TYPE_HYBRID = "hybrid"
+INVERTER_TYPE_BI = "bi"
 
 DEFAULT_PORT = 1502
 DEFAULT_UNIT_ID = 71
@@ -14,8 +17,9 @@ REG_MANUFACTURER = 535        # Inverter Manufacturer (String 16)
 REG_MODEL = 768               # Productname (String 32)
 REG_POWER_CLASS = 800         # Power class e.g. "10" (String 32)
 REG_SERIAL = 559              # Inverter Serial Number (String 16)
-REG_CHARGE_DISCHARGE_LIMIT = 1028 # Controls max charge/discharge power (%)
-REG_POWER_LIMIT_W = 1034          # Power Limit (Watts) - Negative=Charge, Positive=Discharge
+REG_CHARGE_DISCHARGE_LIMIT = 1028      # Hybrid: Controls max charge/discharge power (%)
+REG_CHARGE_DISCHARGE_LIMIT_BI = 1030   # BI: Controls max charge/discharge power (%)
+REG_POWER_LIMIT_W = 1034               # Power Limit (Watts) - Negative=Charge, Positive=Discharge
 REG_CHARGE_RATE = 1038            # Battery Charge Rate (Watts) - Positive
 REG_DISCHARGE_RATE = 1040         # Battery Discharge Rate (Watts) - Positive
 

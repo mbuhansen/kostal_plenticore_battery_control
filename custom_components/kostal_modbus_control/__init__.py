@@ -27,6 +27,10 @@ from .const import (
     REG_BATTERY_TEMP,
     REG_BATTERY_MAX_CHARGE_LIMIT,
     REG_BATTERY_MAX_DISCHARGE_LIMIT,
+    REG_CHARGE_DISCHARGE_LIMIT,
+    REG_CHARGE_DISCHARGE_LIMIT_BI,
+    CONF_INVERTER_TYPE,
+    INVERTER_TYPE_BI,
     REG_BATTERY_WORK_CAPACITY,
     REG_BATTERY_SERIAL,
     REG_BATTERY_MGMT_MODE,
@@ -106,6 +110,7 @@ class KostalData:
     ems_charge_limit_pct: float = 100.0
     inverter_model: str = ""
     inverter_power_class: str = ""
+    charge_discharge_reg: int = REG_CHARGE_DISCHARGE_LIMIT
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -150,11 +155,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hw_version=battery_type_name,
     )
     
+    inverter_type = entry.data.get(CONF_INVERTER_TYPE, "hybrid")
+    charge_discharge_reg = REG_CHARGE_DISCHARGE_LIMIT_BI if inverter_type == INVERTER_TYPE_BI else REG_CHARGE_DISCHARGE_LIMIT
+    _LOGGER.info("Inverter type=%r → charge/discharge register=%d", inverter_type, charge_discharge_reg)
+
     data = KostalData(
         handler=handler,
         inverter_timeout=timeout,
         inverter_model=inverter_model,
         inverter_power_class=inverter_power_class,
+        charge_discharge_reg=charge_discharge_reg,
     )
 
     coordinator = KostalCoordinator(hass, handler, data)

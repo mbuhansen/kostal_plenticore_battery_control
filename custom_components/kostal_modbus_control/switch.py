@@ -18,7 +18,6 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from .const import (
     DOMAIN,
     LOOP_INTERVAL,
-    REG_CHARGE_DISCHARGE_LIMIT,
     REG_CHARGE_RATE,
     REG_DISCHARGE_RATE,
     REG_BATTERY_MAX_CHARGE_LIMIT,
@@ -179,7 +178,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
             target_pct = self._data.charge_rate
             if self._data.ems_status != "Inactive":
                 target_pct = min(target_pct, self._data.ems_charge_limit_pct)
-            await self._data.handler.write_float(REG_CHARGE_DISCHARGE_LIMIT, -abs(target_pct))
+            await self._data.handler.write_float(self._data.charge_discharge_reg, -abs(target_pct))
 
     async def _predbat_loop_action(self) -> None:
         """Predbat-aware loop: charge when predbat_charging is ON, hold SOC floor when OFF."""
@@ -194,14 +193,14 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
             charge_pct = abs(self._data.charge_rate)
             if self._data.ems_status != "Inactive":
                 charge_pct = min(charge_pct, self._data.ems_charge_limit_pct)
-            await self._data.handler.write_float(REG_CHARGE_DISCHARGE_LIMIT, -charge_pct)
+            await self._data.handler.write_float(self._data.charge_discharge_reg, -charge_pct)
             return
 
         # Not charging
         if self._predbat_was_charging is True:
             # Transition: charging just stopped — write 0 and start 45s wait
             _LOGGER.info("Predbat Control: predbat_charging OFF — waiting 45s before SOC check")
-            await self._data.handler.write_float(REG_CHARGE_DISCHARGE_LIMIT, 0.0)
+            await self._data.handler.write_float(self._data.charge_discharge_reg, 0.0)
             self._predbat_transition_time = time.time()
             self._predbat_was_charging = False
             return
@@ -260,9 +259,9 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
 
     async def _stop_action(self):
         if self._predbat_switch is None or not self._predbat_switch.is_on:
-            # Normal mode — write 0 to 1028 to stop charging
-            await self._data.handler.write_float(REG_CHARGE_DISCHARGE_LIMIT, 0.0)
-        # Predbat mode — 1028 was already set to 0 when predbat_charging went OFF
+            # Normal mode — write 0 to stop charging
+            await self._data.handler.write_float(self._data.charge_discharge_reg, 0.0)
+        # Predbat mode — register was already set to 0 when predbat_charging went OFF
         self._data.last_stop_time = time.time()
         if self._predbat_discharge_blocked:
             self._predbat_discharge_blocked = False
@@ -275,10 +274,10 @@ class KostalDischargeStartSwitch(KostalBaseSwitch):
     _name = "Discharge Start"
 
     async def _loop_action(self, *args):
-        await self._data.handler.write_float(REG_CHARGE_DISCHARGE_LIMIT, abs(self._data.discharge_rate))
+        await self._data.handler.write_float(self._data.charge_discharge_reg, abs(self._data.discharge_rate))
 
     async def _stop_action(self):
-        await self._data.handler.write_float(REG_CHARGE_DISCHARGE_LIMIT, 0.0)
+        await self._data.handler.write_float(self._data.charge_discharge_reg, 0.0)
         self._data.last_stop_time = time.time()
 
 class KostalBlockDischargeSwitch(KostalBaseSwitch):
