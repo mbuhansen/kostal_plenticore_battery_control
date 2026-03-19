@@ -117,6 +117,3 @@ class KostalFuseSizeNumber(RestoreNumber):
         self._attr_native_value = value
         self._data.fuse_size = value
         self.async_write_ha_state()
-
-        self._update_data_store(value)
-        self.async_write_ha_state()

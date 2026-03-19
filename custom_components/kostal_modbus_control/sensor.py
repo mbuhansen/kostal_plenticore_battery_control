@@ -248,13 +248,13 @@ class KostalEMSStatusSensor(SensorEntity):
 
 
 class KostalEMSChargeLimitSensor(SensorEntity):
-    """Sensor showing the charge power limit calculated by EMS."""
+    """Sensor showing the charge limit calculated by EMS."""
 
     _attr_has_entity_name = True
     _attr_should_poll = False
-    _attr_device_class = SensorDeviceClass.POWER
+    _attr_device_class = SensorDeviceClass.POWER_FACTOR
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_native_unit_of_measurement = "W"
+    _attr_native_unit_of_measurement = PERCENTAGE
     _attr_icon = "mdi:lightning-bolt"
 
     def __init__(self, data, entry_id: str) -> None:
