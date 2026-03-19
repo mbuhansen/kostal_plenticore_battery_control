@@ -19,6 +19,8 @@ from .const import (
     CONF_MODBUS_TIMEOUT,
     DEFAULT_MODBUS_TIMEOUT,
     LOOP_INTERVAL,
+    REG_MODEL,
+    REG_POWER_CLASS,
     REG_BATTERY_SOC,
     REG_BATTERY_POWER,
     REG_BATTERY_VOLTAGE,
@@ -81,11 +83,12 @@ class KostalData:
     charge_rate: float = 5000.0
     discharge_rate: float = 5000.0
     fuse_size: float = 25.0
-    battery_max_current: float = 13.0
     last_stop_time: float = 0.0
     inverter_timeout: int = DEFAULT_MODBUS_TIMEOUT
     ems_status: str = "Inactive"
     ems_charge_limit_pct: float = 100.0
+    inverter_model: str = ""
+    inverter_power_class: str = ""
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -105,18 +108,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except Exception as err:
         raise ConfigEntryNotReady(f"Cannot connect to Kostal inverter at {host}:{port}") from err
 
+    # Read static string registers from inverter
+    inverter_model = await handler.read_string(REG_MODEL, 16) or ""
+    inverter_power_class = await handler.read_string(REG_POWER_CLASS, 16) or ""
+    _LOGGER.info("Inverter model=%r power_class=%r", inverter_model, inverter_power_class)
+
     # Register device with static info (string registers are not reliable via Modbus on all firmware)
     device_registry = dr.async_get(hass)
-    device_name = entry.data.get("device_name") or f"Kostal Inverter {host}"
+    if inverter_model and inverter_power_class:
+        device_name = f"{inverter_model} {inverter_power_class}"
+    elif inverter_model:
+        device_name = inverter_model
+    else:
+        device_name = f"Kostal Inverter {host}"
     device_registry.async_get_or_create(
         config_entry_id=entry.entry_id,
         identifiers={(DOMAIN, entry.entry_id)},
         manufacturer="Kostal",
-        model="Plenticore",
+        model=inverter_model or "Plenticore",
         name=device_name,
     )
     
-    data = KostalData(handler=handler, inverter_timeout=timeout)
+    data = KostalData(
+        handler=handler,
+        inverter_timeout=timeout,
+        inverter_model=inverter_model,
+        inverter_power_class=inverter_power_class,
+    )
 
     coordinator = KostalCoordinator(hass, handler, data)
     # Use hass.async_create_background_task for broad HA version compatibility

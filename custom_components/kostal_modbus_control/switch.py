@@ -362,9 +362,14 @@ class KostalEMSSwitch(KostalBaseSwitch):
             (safe_limit_amps - max(0.0, phase3)) * 3 * EMS_PHASE_VOLTAGE,
         )
 
-        # Convert headroom watts → % using configured battery max current × actual battery voltage
+        # Convert headroom watts → % using max of 1076/1078 as battery max power
         battery_voltage = data.get(REG_BATTERY_VOLTAGE) or 400.0
-        max_watts = self._data.battery_max_current * battery_voltage
+        max_charge_w = data.get(REG_BATTERY_MAX_CHARGE_LIMIT) or 0.0
+        max_discharge_w = data.get(REG_BATTERY_MAX_DISCHARGE_LIMIT) or 0.0
+        max_watts = max(max_charge_w, max_discharge_w)
+        if max_watts <= 0.0:
+            _LOGGER.warning("EMS: Battery max power unavailable (1076=%.0f, 1078=%.0f) — skipping cycle", max_charge_w, max_discharge_w)
+            return
 
         prev_limit = self._ems_smoothed_limit if self._ems_smoothed_limit is not None else self._data.charge_rate
         raw_pct = max(0.0, min(prev_limit + (headroom_watts / max_watts * 100.0), self._data.charge_rate))
@@ -385,9 +390,9 @@ class KostalEMSSwitch(KostalBaseSwitch):
             new_status = "Ok"
 
         _LOGGER.debug(
-            "EMS: phase=%.1f/%.1f/%.1f A, fuse=%sA, headroom=%.0f W, batt=%.0fV×%.0fA=%.0fW → raw=%.1f%% smooth=%.1f%% (%s)",
+            "EMS: phase=%.1f/%.1f/%.1f A, fuse=%sA, headroom=%.0f W, max_batt=%.0fW → raw=%.1f%% smooth=%.1f%% (%s)",
             phase1, phase2, phase3, fuse_size,
-            headroom_watts, battery_voltage, self._data.battery_max_current, max_watts,
+            headroom_watts, max_watts,
             raw_pct, target_pct, new_status,
         )
 

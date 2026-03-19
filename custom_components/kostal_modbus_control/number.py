@@ -13,11 +13,9 @@ from .const import (
     NUMBER_CHARGE_RATE,
     NUMBER_DISCHARGE_RATE,
     NUMBER_FUSE_SIZE,
-    NUMBER_BATTERY_MAX_CURRENT,
     DEFAULT_CHARGE_RATE,
     DEFAULT_DISCHARGE_RATE,
     DEFAULT_FUSE_SIZE,
-    DEFAULT_BATTERY_MAX_CURRENT,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -34,7 +32,6 @@ async def async_setup_entry(
         KostalNumber(data, entry.entry_id, NUMBER_CHARGE_RATE, "Set Charge Rate", "%", DEFAULT_CHARGE_RATE),
         KostalNumber(data, entry.entry_id, NUMBER_DISCHARGE_RATE, "Set Discharge Rate", "%", DEFAULT_DISCHARGE_RATE),
         KostalFuseSizeNumber(data, entry.entry_id),
-        KostalBatteryMaxCurrentNumber(data, entry.entry_id),
     ]
 
     async_add_entities(entities)
@@ -122,40 +119,4 @@ class KostalFuseSizeNumber(RestoreNumber):
         self.async_write_ha_state()
 
         self._update_data_store(value)
-        self.async_write_ha_state()
-
-
-class KostalBatteryMaxCurrentNumber(RestoreNumber):
-    """Input for battery max DC current in Ampere."""
-
-    _attr_has_entity_name = True
-    _attr_native_min_value = 13.0
-    _attr_native_max_value = 50.0
-    _attr_native_step = 1.0
-    _attr_native_unit_of_measurement = "A"
-    _attr_mode = "box"
-    _attr_name = "Battery Max Current"
-    _attr_icon = "mdi:current-dc"
-    _attr_entity_category = EntityCategory.CONFIG
-
-    def __init__(self, data, entry_id: str) -> None:
-        self._data = data
-        self._entry_id = entry_id
-        self._attr_unique_id = f"{entry_id}_{NUMBER_BATTERY_MAX_CURRENT}"
-        self._attr_native_value = DEFAULT_BATTERY_MAX_CURRENT
-        self._data.battery_max_current = DEFAULT_BATTERY_MAX_CURRENT
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(identifiers={(DOMAIN, self._entry_id)})
-
-    async def async_added_to_hass(self) -> None:
-        await super().async_added_to_hass()
-        if (state := await self.async_get_last_number_data()) is not None and state.native_value is not None:
-            self._attr_native_value = state.native_value
-            self._data.battery_max_current = float(state.native_value)
-
-    async def async_set_native_value(self, value: float) -> None:
-        self._attr_native_value = value
-        self._data.battery_max_current = value
         self.async_write_ha_state()

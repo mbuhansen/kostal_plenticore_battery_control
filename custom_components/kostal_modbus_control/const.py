@@ -4,7 +4,6 @@ DOMAIN = "kostal_modbus_control"
 CONF_PORT = "port"
 CONF_UNIT_ID = "unit_id"
 CONF_MODBUS_TIMEOUT = "modbus_timeout"  # The configured timeout on the inverter
-CONF_DEVICE_NAME = "device_name"
 
 DEFAULT_PORT = 1502
 DEFAULT_UNIT_ID = 71
@@ -13,6 +12,7 @@ DEFAULT_MODBUS_TIMEOUT = 30  # Default inverter timeout setting
 # Modbus Registers (Holding Registers)
 REG_MANUFACTURER = 535        # Inverter Manufacturer (String 16)
 REG_MODEL = 768               # Productname (String 32)
+REG_POWER_CLASS = 800         # Power class e.g. "10" (String 32)
 REG_SERIAL = 559              # Inverter Serial Number (String 16)
 REG_CHARGE_DISCHARGE_LIMIT = 1028 # Controls max charge/discharge power (%)
 REG_POWER_LIMIT_W = 1034          # Power Limit (Watts) - Negative=Charge, Positive=Discharge
@@ -74,14 +74,12 @@ SWITCH_PREDBAT_CONTROL = "predbat_control"
 NUMBER_CHARGE_RATE = "charge_rate"
 NUMBER_DISCHARGE_RATE = "discharge_rate"
 NUMBER_FUSE_SIZE = "fuse_size"
-NUMBER_BATTERY_MAX_CURRENT = "battery_max_current"
 
 # Defaults
 DEFAULT_MAX_PERCENT = 100.0
 DEFAULT_CHARGE_RATE = 100.0
 DEFAULT_DISCHARGE_RATE = 100.0
-DEFAULT_FUSE_SIZE = 25.0
-DEFAULT_BATTERY_MAX_CURRENT = 13.0  # Amps — old Kostal default; user should set to actual value
+DEFAULT_FUSE_SIZE = 25.0  # Amps — old Kostal default; user should set to actual value
 
 # EMS settings
 EMS_SAFETY_MARGIN = 0.90   # Trigger at 90% of fuse size
