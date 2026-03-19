@@ -74,12 +74,14 @@ SWITCH_PREDBAT_CONTROL = "predbat_control"
 NUMBER_CHARGE_RATE = "charge_rate"
 NUMBER_DISCHARGE_RATE = "discharge_rate"
 NUMBER_FUSE_SIZE = "fuse_size"
+NUMBER_BATTERY_MAX_CURRENT = "battery_max_current"
 
 # Defaults
 DEFAULT_MAX_PERCENT = 100.0
-DEFAULT_CHARGE_RATE = 5000.0
-DEFAULT_DISCHARGE_RATE = 5000.0
+DEFAULT_CHARGE_RATE = 100.0
+DEFAULT_DISCHARGE_RATE = 100.0
 DEFAULT_FUSE_SIZE = 25.0
+DEFAULT_BATTERY_MAX_CURRENT = 13.0  # Amps — old Kostal default; user should set to actual value
 
 # EMS settings
 EMS_SAFETY_MARGIN = 0.90   # Trigger at 90% of fuse size

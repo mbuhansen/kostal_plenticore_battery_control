@@ -81,10 +81,11 @@ class KostalData:
     charge_rate: float = 5000.0
     discharge_rate: float = 5000.0
     fuse_size: float = 25.0
+    battery_max_current: float = 13.0
     last_stop_time: float = 0.0
     inverter_timeout: int = DEFAULT_MODBUS_TIMEOUT
     ems_status: str = "Inactive"
-    ems_charge_limit_watts: float = 15000.0
+    ems_charge_limit_pct: float = 100.0
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

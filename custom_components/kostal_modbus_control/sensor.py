@@ -271,7 +271,7 @@ class KostalEMSChargeLimitSensor(SensorEntity):
     def native_value(self) -> float | None:
         if self._data.ems_status == "Inactive":
             return None
-        return self._data.ems_charge_limit_watts
+        return self._data.ems_charge_limit_pct
 
     async def async_added_to_hass(self) -> None:
         self.async_on_remove(
