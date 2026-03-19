@@ -125,7 +125,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         config_entry_id=entry.entry_id,
         identifiers={(DOMAIN, entry.entry_id)},
         manufacturer="Kostal",
-        model=inverter_model or "Plenticore",
+        model=device_name,
         name=device_name,
     )
     
