@@ -16,10 +16,22 @@ from homeassistant.helpers.selector import SelectSelector, SelectSelectorConfig,
 from .const import (
     DEFAULT_PORT, DOMAIN, CONF_MODBUS_TIMEOUT, DEFAULT_MODBUS_TIMEOUT, DEFAULT_UNIT_ID,
     CONF_INVERTER_TYPE, INVERTER_TYPE_HYBRID, INVERTER_TYPE_BI,
+    CONF_MIN_SOC, CONF_MAX_SOC,
 )
 from .modbus_handler import KostalModbusHandler
 
 _LOGGER = logging.getLogger(__name__)
+
+_SOC_OPTIONS = [""] + [str(v) for v in range(5, 105, 5)]
+
+
+def _soc_selector():
+    return SelectSelector(
+        SelectSelectorConfig(
+            options=_SOC_OPTIONS,
+            mode=SelectSelectorMode.DROPDOWN,
+        )
+    )
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Kostal Modbus Control."""
@@ -27,7 +39,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
     
     # Compatibility with different HA versions
-    _attr_domain = DOMAIN 
+    _attr_domain = DOMAIN
+
+    @staticmethod
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> KostalOptionsFlowHandler:
+        return KostalOptionsFlowHandler(config_entry)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -71,3 +89,31 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=data_schema,
             errors=errors,
         )
+
+
+class KostalOptionsFlowHandler(config_entries.OptionsFlow):
+    """Handle options for Kostal Modbus Control."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        self._entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        current = self._entry.options
+        schema = vol.Schema(
+            {
+                vol.Optional(
+                    CONF_MIN_SOC,
+                    default=current.get(CONF_MIN_SOC, ""),
+                ): _soc_selector(),
+                vol.Optional(
+                    CONF_MAX_SOC,
+                    default=current.get(CONF_MAX_SOC, ""),
+                ): _soc_selector(),
+            }
+        )
+        return self.async_show_form(step_id="init", data_schema=schema)

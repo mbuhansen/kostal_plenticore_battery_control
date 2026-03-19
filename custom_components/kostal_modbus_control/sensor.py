@@ -39,6 +39,8 @@ from .const import (
     REG_BATTERY_MODEL_ID,
     REG_BATTERY_BMS_SERIAL,
     REG_BATTERY_FIRMWARE,
+    REG_BATTERY_MIN_SOC,
+    REG_BATTERY_MAX_SOC,
     REG_CURRENT_PHASE1,
     REG_CURRENT_PHASE2,
     REG_CURRENT_PHASE3,
@@ -65,6 +67,8 @@ from .const import (
     SENSOR_BATTERY_GROSS_CAPACITY,
     SENSOR_BATTERY_CYCLES,
     SENSOR_BATTERY_CHARGE_CURRENT,
+    SENSOR_BATTERY_MIN_SOC,
+    SENSOR_BATTERY_MAX_SOC,
     BATTERY_TYPE_MAP,
     SENSOR_TYPE_MAP,
     SIGNAL_EMS_STATUS_UPDATED,
@@ -107,6 +111,9 @@ async def async_setup_entry(
         KostalBatteryGrossCapacitySensor(coordinator, entry.entry_id),
         KostalBatteryCyclesSensor(coordinator, entry.entry_id),
         KostalBatteryChargeCurrentSensor(coordinator, entry.entry_id),
+        # SOC limit sensors (diagnostic, disabled by default)
+        KostalBatteryMinSoCSensor(coordinator, entry.entry_id),
+        KostalBatteryMaxSoCSensor(coordinator, entry.entry_id),
     ]
 
     async_add_entities(entities)
@@ -468,6 +475,50 @@ class KostalBatteryChargeCurrentSensor(KostalBaseSensor):
     _address = REG_BATTERY_CHARGE_CURRENT
     _attr_device_class = SensorDeviceClass.CURRENT
     _attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+
+class KostalBatteryMinSoCSensor(KostalBaseSensor):
+    _key = SENSOR_BATTERY_MIN_SOC
+    _name = "Battery Minimum SOC"
+    _address = REG_BATTERY_MIN_SOC
+    _attr_device_class = SensorDeviceClass.BATTERY
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+
+class KostalBatteryMaxSoCSensor(KostalBaseSensor):
+    _key = SENSOR_BATTERY_MAX_SOC
+    _name = "Battery Maximum SOC"
+    _address = REG_BATTERY_MAX_SOC
+    _attr_device_class = SensorDeviceClass.BATTERY
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+
+class KostalBatteryMinSoCSensor(KostalBaseSensor):
+    _key = SENSOR_BATTERY_MIN_SOC
+    _name = "Battery Minimum SOC"
+    _address = REG_BATTERY_MIN_SOC
+    _attr_device_class = SensorDeviceClass.BATTERY
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+
+class KostalBatteryMaxSoCSensor(KostalBaseSensor):
+    _key = SENSOR_BATTERY_MAX_SOC
+    _name = "Battery Maximum SOC"
+    _address = REG_BATTERY_MAX_SOC
+    _attr_device_class = SensorDeviceClass.BATTERY
+    _attr_native_unit_of_measurement = PERCENTAGE
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_entity_registry_enabled_default = False

@@ -18,5 +18,17 @@
         "abort": {
             "already_configured": "Device is already configured"
         }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "title": "Battery SOC Limits",
+                "data": {
+                    "min_soc": "Minimum SOC (%, blank = no limit)",
+                    "max_soc": "Maximum SOC (%, blank = no limit)"
+                },
+                "description": "These values are written directly to the inverter via Modbus. Leave blank to leave the inverter setting unchanged."
+            }
+        }
     }
 }

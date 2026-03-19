@@ -7,6 +7,8 @@ CONF_MODBUS_TIMEOUT = "modbus_timeout"  # The configured timeout on the inverter
 CONF_INVERTER_TYPE = "inverter_type"
 INVERTER_TYPE_HYBRID = "hybrid"
 INVERTER_TYPE_BI = "bi"
+CONF_MIN_SOC = "min_soc"
+CONF_MAX_SOC = "max_soc"
 
 DEFAULT_PORT = 1502
 DEFAULT_UNIT_ID = 71
@@ -22,6 +24,8 @@ REG_CHARGE_DISCHARGE_LIMIT_BI = 1030   # BI: Controls max charge/discharge power
 REG_POWER_LIMIT_W = 1034               # Power Limit (Watts) - Negative=Charge, Positive=Discharge
 REG_CHARGE_RATE = 1038            # Battery Charge Rate (Watts) - Positive
 REG_DISCHARGE_RATE = 1040         # Battery Discharge Rate (Watts) - Positive
+REG_BATTERY_MIN_SOC = 1042        # Minimum SOC % - Float (0x412) RW
+REG_BATTERY_MAX_SOC = 1044        # Maximum SOC % - Float (0x414) RW
 
 # Read-Only Registers (Battery Data)
 REG_BATTERY_SOC = 210             # Act. state of charge (%) - Float (0xD2)
@@ -93,6 +97,8 @@ SENSOR_BATTERY_MODEL_ID = "battery_model_id"
 SENSOR_BATTERY_GROSS_CAPACITY = "battery_gross_capacity"
 SENSOR_BATTERY_CYCLES = "battery_cycles"
 SENSOR_BATTERY_CHARGE_CURRENT = "battery_charge_current"
+SENSOR_BATTERY_MIN_SOC = "battery_min_soc"
+SENSOR_BATTERY_MAX_SOC = "battery_max_soc"
 
 # Dispatcher signal for EMS status updates (append _{entry_id} when used)
 SIGNAL_EMS_STATUS_UPDATED = "kostal_modbus_ems_status"
