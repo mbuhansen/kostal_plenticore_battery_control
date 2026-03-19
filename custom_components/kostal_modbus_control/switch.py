@@ -28,12 +28,20 @@ from .const import (
     REG_SENSOR_TYPE,
     REG_BATTERY_SOC,
     REG_BATTERY_VOLTAGE,
+    REG_IO_OUTPUT_1,
+    REG_IO_OUTPUT_2,
+    REG_IO_OUTPUT_3,
+    REG_IO_OUTPUT_4,
     SWITCH_BLOCK_CHARGE,
     SWITCH_CHARGE_START,
     SWITCH_BLOCK_DISCHARGE,
     SWITCH_DISCHARGE_START,
     SWITCH_EMS,
     SWITCH_PREDBAT_CONTROL,
+    SWITCH_IO_OUTPUT_1,
+    SWITCH_IO_OUTPUT_2,
+    SWITCH_IO_OUTPUT_3,
+    SWITCH_IO_OUTPUT_4,
     EMS_SAFETY_MARGIN,
     EMS_PHASE_VOLTAGE,
     SIGNAL_EMS_STATUS_UPDATED,
@@ -60,6 +68,11 @@ async def async_setup_entry(
         KostalBlockChargeSwitch(data, entry.entry_id),
         KostalEMSSwitch(data, entry.entry_id, charge_start_switch),
         predbat_switch,
+        # I/O Board outputs (hidden by default)
+        KostalIOOutputSwitch(data, entry.entry_id, SWITCH_IO_OUTPUT_1, "I/O Output 1", REG_IO_OUTPUT_1),
+        KostalIOOutputSwitch(data, entry.entry_id, SWITCH_IO_OUTPUT_2, "I/O Output 2", REG_IO_OUTPUT_2),
+        KostalIOOutputSwitch(data, entry.entry_id, SWITCH_IO_OUTPUT_3, "I/O Output 3", REG_IO_OUTPUT_3),
+        KostalIOOutputSwitch(data, entry.entry_id, SWITCH_IO_OUTPUT_4, "I/O Output 4", REG_IO_OUTPUT_4),
     ]
     async_add_entities(entities)
 
@@ -432,5 +445,43 @@ class KostalPredbatControlSwitch(KostalBaseSwitch, RestoreEntity):
         self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
+        self._attr_is_on = False
+        self.async_write_ha_state()
+
+
+class KostalIOOutputSwitch(SwitchEntity, RestoreEntity):
+    """Simple one-shot switch for I/O board outputs. Writes 1 on, 0 off."""
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_entity_registry_enabled_default = False
+
+    def __init__(self, data, entry_id: str, key: str, name: str, register: int) -> None:
+        self._data = data
+        self._entry_id = entry_id
+        self._key = key
+        self._register = register
+        self._attr_unique_id = f"{entry_id}_{key}"
+        self._attr_name = name
+        self._attr_is_on = False
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(identifiers={(DOMAIN, self._entry_id)})
+
+    async def async_added_to_hass(self) -> None:
+        """Restore last state after HA restart."""
+        last = await self.async_get_last_state()
+        if last is not None:
+            self._attr_is_on = last.state == "on"
+        self.async_write_ha_state()
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        await self._data.handler.write_registers(self._register, [1])
+        self._attr_is_on = True
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await self._data.handler.write_registers(self._register, [0])
         self._attr_is_on = False
         self.async_write_ha_state()

@@ -27,6 +27,12 @@ REG_DISCHARGE_RATE = 1040         # Battery Discharge Rate (Watts) - Positive
 REG_BATTERY_MIN_SOC = 1042        # Minimum SOC % - Float (0x412) RW
 REG_BATTERY_MAX_SOC = 1044        # Maximum SOC % - Float (0x414) RW
 
+# I/O Board Output Registers
+REG_IO_OUTPUT_1 = 608             # I/O-Board Switched Output 1 - U16 (0x260) RW
+REG_IO_OUTPUT_2 = 609             # I/O-Board Switched Output 2 - U16 (0x261) RW
+REG_IO_OUTPUT_3 = 610             # I/O-Board Switched Output 3 - U16 (0x262) RW
+REG_IO_OUTPUT_4 = 611             # I/O-Board Switched Output 4 - U16 (0x263) RW
+
 # Read-Only Registers (Battery Data)
 REG_BATTERY_SOC = 210             # Act. state of charge (%) - Float (0xD2)
 REG_BATTERY_TEMP = 214            # Battery Temperature (°C) - Float (0xD6)
@@ -113,6 +119,10 @@ SWITCH_BLOCK_CHARGE = "block_charge"
 SWITCH_BLOCK_DISCHARGE = "block_discharge"
 SWITCH_EMS = "ems_grid_protection"
 SWITCH_PREDBAT_CONTROL = "predbat_control"
+SWITCH_IO_OUTPUT_1 = "io_output_1"
+SWITCH_IO_OUTPUT_2 = "io_output_2"
+SWITCH_IO_OUTPUT_3 = "io_output_3"
+SWITCH_IO_OUTPUT_4 = "io_output_4"
 
 # Entity descriptions (Numbers/Input Numbers)
 NUMBER_CHARGE_RATE = "charge_rate"
