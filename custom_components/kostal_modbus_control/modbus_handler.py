@@ -59,6 +59,14 @@ class KostalModbusHandler:
             kwargs[self._unit_kwarg] = self._unit_id
         return await self._client.write_registers(address, **kwargs)
 
+    async def _safe_write_single(self, address, value):
+        """Write a single register with auto-detected unit_id parameter name."""
+        self._detect_unit_kwarg()
+        kwargs = {"value": value}
+        if self._unit_kwarg:
+            kwargs[self._unit_kwarg] = self._unit_id
+        return await self._client.write_register(address, **kwargs)
+
     async def read_string(self, address, length):
         """Reads a string from holding registers."""
         # length is the number of registers to read.
@@ -186,4 +194,17 @@ class KostalModbusHandler:
                     self._logger.error(f"Error writing to {address}: {result}")
             except Exception as e:
                 self._logger.error(f"Exception writing to {address}: {e}")
+                await self.close()
+
+    async def write_register(self, address, value):
+        """Writes a single 16-bit register using Modbus function 0x06."""
+        await self.connect()
+        async with self._lock:
+            try:
+                result = await self._safe_write_single(address, value)
+
+                if result.isError():
+                    self._logger.error(f"Error writing single register to {address}: {result}")
+            except Exception as e:
+                self._logger.error(f"Exception writing single register to {address}: {e}")
                 await self.close()

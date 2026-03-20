@@ -568,11 +568,11 @@ class KostalIOOutputSwitch(SwitchEntity, RestoreEntity):
         self.async_write_ha_state()
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        await self._data.handler.write_registers(self._register, [1])
+        await self._data.handler.write_register(self._register, 1)
         self._attr_is_on = True
         self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        await self._data.handler.write_registers(self._register, [0])
+        await self._data.handler.write_register(self._register, 0)
         self._attr_is_on = False
         self.async_write_ha_state()
