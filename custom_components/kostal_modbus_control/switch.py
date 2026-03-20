@@ -184,6 +184,8 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         self._predbat_discharge_blocked: bool = False
 
     async def _loop_action(self, *args):
+        if not self._attr_is_on:
+            return
         if self._predbat_switch is not None and self._predbat_switch.is_on:
             await self._predbat_loop_action()
         else:
@@ -195,6 +197,9 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
 
     async def _predbat_loop_action(self) -> None:
         """Predbat-aware loop: charge when predbat_charging is ON, hold SOC floor when OFF."""
+        if not self._attr_is_on:
+            _LOGGER.debug("Predbat Control: Charge Start er OFF — ignorerer predbat_charging")
+            return
         state = self.hass.states.get("binary_sensor.predbat_charging")
         is_charging = state is not None and state.state == "on"
 
@@ -206,6 +211,8 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
             charge_pct = abs(self._data.charge_rate)
             if self._data.ems_status != "Inactive":
                 charge_pct = min(charge_pct, self._data.ems_charge_limit_pct)
+            if not self._attr_is_on:
+                return
             await self._data.handler.write_float(self._data.charge_discharge_reg, -charge_pct)
             return
 
@@ -228,6 +235,10 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         elapsed = time.time() - (self._predbat_transition_time or 0.0)
         if elapsed < 45:
             _LOGGER.debug("Predbat Control: %.0fs remaining before SOC check", 45 - elapsed)
+            return
+
+        # Final guard before SOC comparison — Charge Start is master switch
+        if not self._attr_is_on:
             return
 
         # SOC check against predbat.best_charge_limit
@@ -271,16 +282,21 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                 self._predbat_discharge_blocked = False
 
     async def _stop_action(self):
-        if self._predbat_switch is None or not self._predbat_switch.is_on:
-            # Normal mode — write 0 to stop charging
+        # Only write 0 to 1028 if we were actually charging.
+        # In predbat hold-mode (_predbat_was_charging is False), 0 was already written
+        # to 1028 when predbat_charging went OFF — no need to write again.
+        # In normal mode (predbat switch OFF) we always write 0.
+        if self._predbat_switch is None or not self._predbat_switch.is_on or self._predbat_was_charging is True:
             await self._data.handler.write_float(self._data.charge_discharge_reg, 0.0)
-        # Predbat mode — register was already set to 0 when predbat_charging went OFF
         self._data.last_stop_time = time.time()
         if self._predbat_discharge_blocked:
             self._predbat_discharge_blocked = False
             await self._data.handler.write_float(REG_DISCHARGE_RATE, self._max_discharge_watts())
         self._predbat_was_charging = None
         self._predbat_transition_time = None
+        # Close the Modbus connection so the inverter sees a clean disconnect.
+        # It will reconnect automatically on the next read/write.
+        await self._data.handler.close()
 
 class KostalDischargeStartSwitch(KostalBaseSwitch):
     _key = SWITCH_DISCHARGE_START
@@ -290,8 +306,10 @@ class KostalDischargeStartSwitch(KostalBaseSwitch):
         await self._data.handler.write_float(self._data.charge_discharge_reg, abs(self._data.discharge_rate))
 
     async def _stop_action(self):
-        await self._data.handler.write_float(self._data.charge_discharge_reg, 0.0)
         self._data.last_stop_time = time.time()
+        await self._data.handler.write_float(self._data.charge_discharge_reg, 0.0)
+        await self._data.handler.close()
+
 
 class KostalBlockDischargeSwitch(KostalBaseSwitch):
     _key = SWITCH_BLOCK_DISCHARGE
@@ -305,6 +323,7 @@ class KostalBlockDischargeSwitch(KostalBaseSwitch):
     async def _stop_action(self):
         self._data.last_stop_time = time.time()
         await self._data.handler.write_float(REG_DISCHARGE_RATE, self._max_discharge_watts())
+        await self._data.handler.close()
 
 class KostalBlockChargeSwitch(KostalBaseSwitch):
     _key = SWITCH_BLOCK_CHARGE
@@ -318,6 +337,7 @@ class KostalBlockChargeSwitch(KostalBaseSwitch):
     async def _stop_action(self):
         self._data.last_stop_time = time.time()
         await self._data.handler.write_float(REG_CHARGE_RATE, self._max_charge_watts())
+        await self._data.handler.close()
 
 
 class KostalEMSSwitch(KostalBaseSwitch):
