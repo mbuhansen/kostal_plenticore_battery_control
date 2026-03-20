@@ -1,6 +1,7 @@
 import logging
 import struct
 import asyncio
+import inspect
 from pymodbus.client import AsyncModbusTcpClient
 
 class KostalModbusHandler:
