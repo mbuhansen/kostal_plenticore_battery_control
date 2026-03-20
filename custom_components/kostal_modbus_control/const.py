@@ -48,6 +48,7 @@ REG_BATTERY_FIRMWARE = 586        # Battery Firmware - U32 (0x24A)
 REG_BATTERY_TYPE = 588            # Battery type - U16 (0x24C)
 
 # Read-Only Registers (Grid/Powermeter)
+REG_TOTAL_ACTIVE_POWER = 252      # Total active power (powermeter) (W) - Float (0xFC)
 REG_CURRENT_PHASE1 = 222          # Current phase 1 powermeter (A) - Float (0xDE)
 REG_CURRENT_PHASE2 = 232          # Current phase 2 powermeter (A) - Float (0xE8)
 REG_CURRENT_PHASE3 = 242          # Current phase 3 powermeter (A) - Float (0xF2)
@@ -89,6 +90,7 @@ SENSOR_BATTERY_VOLTAGE = "battery_voltage"
 SENSOR_BATTERY_TEMP = "battery_temp"
 SENSOR_BATTERY_MAX_CHARGE_LIMIT = "battery_max_charge_limit"
 SENSOR_BATTERY_MAX_DISCHARGE_LIMIT = "battery_max_discharge_limit"
+SENSOR_TOTAL_ACTIVE_POWER = "total_active_power"
 SENSOR_CURRENT_PHASE1 = "current_phase1"
 SENSOR_CURRENT_PHASE2 = "current_phase2"
 SENSOR_CURRENT_PHASE3 = "current_phase3"

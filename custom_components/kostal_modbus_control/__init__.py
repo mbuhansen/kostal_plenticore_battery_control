@@ -22,6 +22,7 @@ from .const import (
     REG_MODEL,
     REG_POWER_CLASS,
     REG_TOTAL_HOME_CONSUMPTION,
+    REG_TOTAL_ACTIVE_POWER,
     REG_BATTERY_SOC,
     REG_BATTERY_POWER,
     REG_BATTERY_VOLTAGE,
@@ -78,6 +79,7 @@ class KostalCoordinator(DataUpdateCoordinator):
             # Float registers (2 registers each)
             for address in (
                 REG_TOTAL_HOME_CONSUMPTION,
+                REG_TOTAL_ACTIVE_POWER,
                 REG_BATTERY_SOC,
                 REG_BATTERY_VOLTAGE,
                 REG_BATTERY_TEMP,

@@ -20,6 +20,7 @@ from .const import (
     LOOP_INTERVAL,
     REG_CHARGE_RATE,
     REG_DISCHARGE_RATE,
+    REG_TOTAL_ACTIVE_POWER,
     REG_BATTERY_MAX_CHARGE_LIMIT,
     REG_BATTERY_MAX_DISCHARGE_LIMIT,
     REG_CURRENT_PHASE1,
@@ -179,6 +180,57 @@ class KostalBaseSwitch(SwitchEntity):
             return coordinator.data.get(REG_BATTERY_MAX_CHARGE_LIMIT) or 0.0
         return 0.0
 
+    def _stop_discharge_pct_from_active_power(self) -> float:
+        """Estimate a discharge setpoint from grid-point power and current battery power.
+
+        For a smart meter at the grid connection point, register 252 is:
+        - positive when importing from grid
+        - negative when exporting to grid
+
+        Battery power is:
+        - negative while charging
+        - positive while discharging
+
+        Adding the two removes the battery contribution and gives an estimate of
+        the underlying house demand seen at the grid point.
+        """
+        coordinator = self._data.coordinator
+        if coordinator is None or coordinator.data is None:
+            _LOGGER.debug("Stop setpoint: no coordinator data available")
+            return 0.0
+
+        total_active_power = coordinator.data.get(REG_TOTAL_ACTIVE_POWER)
+        battery_power = coordinator.data.get(REG_BATTERY_POWER)
+        max_discharge_watts = self._max_discharge_watts()
+
+        if total_active_power is None or battery_power is None or max_discharge_watts <= 0.0:
+            _LOGGER.debug(
+                "Stop setpoint: insufficient data total_active_power=%s battery_power=%s max_discharge_watts=%s",
+                total_active_power,
+                battery_power,
+                max_discharge_watts,
+            )
+            return 0.0
+
+        # Gridpoint meter: import is positive, feed-in is negative.
+        # Battery power is negative while charging and positive while discharging.
+        # Summing them estimates the house load before battery contribution.
+        house_load_estimate_watts = total_active_power + battery_power
+        target_watts = max(0.0, house_load_estimate_watts)
+        target_pct = min(100.0, (target_watts / max_discharge_watts) * 100.0)
+        rounded_target_pct = round(target_pct, 1)
+
+        _LOGGER.debug(
+            "Stop setpoint: total_active_power=%.1fW battery_power=%.1fW house_load_estimate=%.1fW max_discharge=%.1fW stop_pct=%.1f%%",
+            total_active_power,
+            battery_power,
+            house_load_estimate_watts,
+            max_discharge_watts,
+            rounded_target_pct,
+        )
+
+        return rounded_target_pct
+
     async def _pre_start_action(self):
         """Køres straks ved start, inden eventuel ventetid på 1034."""
         pass
@@ -294,9 +346,10 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
 
         # Not charging
         if self._predbat_was_charging is True:
-            # Transition: charging just stopped — write 0 and start 45s wait
+            # Transition: charging just stopped — write calculated stop setpoint and start 45s wait
             _LOGGER.info("Predbat Control: predbat_charging OFF — waiting 45s before SOC check")
-            await self._data.handler.write_float(self._data.charge_discharge_reg, 0.0)
+            stop_pct = self._stop_discharge_pct_from_active_power()
+            await self._data.handler.write_float(self._data.charge_discharge_reg, stop_pct)
             self._predbat_transition_time = time.time()
             self._predbat_was_charging = False
             return
@@ -352,12 +405,13 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                 self._predbat_discharge_blocked = False
 
     async def _stop_action(self):
-        # Only write 0 to 1028 if we were actually charging.
-        # In predbat hold-mode (_predbat_was_charging is False), 0 was already written
-        # to 1028 when predbat_charging went OFF — no need to write again.
-        # In normal mode (predbat switch OFF) we always write 0.
+        # Only write a stop setpoint to 1028 if we were actually charging.
+        # In predbat hold-mode (_predbat_was_charging is False), the calculated
+        # stop setpoint was already written when predbat_charging went OFF.
+        # In normal mode (predbat switch OFF) we always write the stop setpoint here.
         if self._predbat_switch is None or not self._predbat_switch.is_on or self._predbat_was_charging is True:
-            await self._data.handler.write_float(self._data.charge_discharge_reg, 0.0)
+            stop_pct = self._stop_discharge_pct_from_active_power()
+            await self._data.handler.write_float(self._data.charge_discharge_reg, stop_pct)
         self._data.last_stop_time = time.time()
         if self._predbat_discharge_blocked:
             self._predbat_discharge_blocked = False
@@ -378,7 +432,8 @@ class KostalDischargeStartSwitch(KostalBaseSwitch):
 
     async def _stop_action(self):
         self._data.last_stop_time = time.time()
-        await self._data.handler.write_float(self._data.charge_discharge_reg, 0.0)
+        stop_pct = self._stop_discharge_pct_from_active_power()
+        await self._data.handler.write_float(self._data.charge_discharge_reg, stop_pct)
         await self._data.handler.close()
 
 
