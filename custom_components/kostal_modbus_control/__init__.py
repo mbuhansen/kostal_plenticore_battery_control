@@ -81,6 +81,8 @@ class KostalCoordinator(DataUpdateCoordinator):
                 REG_BATTERY_TEMP,
                 REG_BATTERY_MAX_CHARGE_LIMIT,
                 REG_BATTERY_MAX_DISCHARGE_LIMIT,
+                REG_CHARGE_DISCHARGE_LIMIT,
+                REG_CHARGE_DISCHARGE_LIMIT_BI,
                 REG_BATTERY_WORK_CAPACITY,
                 REG_BATTERY_CHARGE_CURRENT,
                 REG_BATTERY_CYCLES,

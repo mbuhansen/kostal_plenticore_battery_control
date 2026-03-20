@@ -24,7 +24,10 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import KostalCoordinator
 from .const import (
+    CONF_INVERTER_TYPE,
     DOMAIN,
+    INVERTER_TYPE_BI,
+    INVERTER_TYPE_HYBRID,
     REG_TOTAL_HOME_CONSUMPTION,
     REG_BATTERY_SOC,
     REG_BATTERY_POWER,
@@ -32,6 +35,8 @@ from .const import (
     REG_BATTERY_TEMP,
     REG_BATTERY_MAX_CHARGE_LIMIT,
     REG_BATTERY_MAX_DISCHARGE_LIMIT,
+    REG_CHARGE_DISCHARGE_LIMIT,
+    REG_CHARGE_DISCHARGE_LIMIT_BI,
     REG_BATTERY_WORK_CAPACITY,
     REG_BATTERY_SERIAL,
     REG_BATTERY_MGMT_MODE,
@@ -61,6 +66,8 @@ from .const import (
     SENSOR_SENSOR_TYPE,
     SENSOR_EMS_STATUS,
     SENSOR_EMS_CHARGE_LIMIT,
+    SENSOR_BATTERY_CHARGE_CURRENT_SETPOINT,
+    SENSOR_BATTERY_CHARGE_POWER_SETPOINT,
     SENSOR_BATTERY_WORK_CAPACITY,
     SENSOR_BATTERY_SERIAL,
     SENSOR_BATTERY_MGMT_MODE,
@@ -88,6 +95,7 @@ async def async_setup_entry(
     """Set up the Kostal Modbus sensors."""
     data = hass.data[DOMAIN][entry.entry_id]
     coordinator = data.coordinator
+    inverter_type = entry.data.get(CONF_INVERTER_TYPE, INVERTER_TYPE_HYBRID)
 
     entities = [
         KostalTotalHomeConsumptionSensor(coordinator, entry.entry_id),
@@ -120,6 +128,11 @@ async def async_setup_entry(
         KostalBatteryMinSoCSensor(coordinator, entry.entry_id),
         KostalBatteryMaxSoCSensor(coordinator, entry.entry_id),
     ]
+
+    if inverter_type == INVERTER_TYPE_BI:
+        entities.append(KostalBatteryChargePowerSetpointSensor(coordinator, entry.entry_id))
+    else:
+        entities.append(KostalBatteryChargeCurrentSetpointSensor(coordinator, entry.entry_id))
 
     async_add_entities(entities)
 
@@ -167,6 +180,28 @@ class KostalTotalHomeConsumptionSensor(KostalBaseSensor):
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_native_unit_of_measurement = UnitOfEnergy.WATT_HOUR
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
+
+
+class KostalBatteryChargeCurrentSetpointSensor(KostalBaseSensor):
+    _key = SENSOR_BATTERY_CHARGE_CURRENT_SETPOINT
+    _name = "Battery Charge Current Setpoint"
+    _address = REG_CHARGE_DISCHARGE_LIMIT
+    _attr_device_class = None
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+
+class KostalBatteryChargePowerSetpointSensor(KostalBaseSensor):
+    _key = SENSOR_BATTERY_CHARGE_POWER_SETPOINT
+    _name = "Battery Charge Power Setpoint"
+    _address = REG_CHARGE_DISCHARGE_LIMIT_BI
+    _attr_device_class = None
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
 
 class KostalBatteryPowerSensor(KostalBaseSensor):
     _key = SENSOR_BATTERY_POWER
