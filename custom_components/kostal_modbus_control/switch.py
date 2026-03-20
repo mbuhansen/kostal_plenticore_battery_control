@@ -60,12 +60,23 @@ async def async_setup_entry(
     
     predbat_switch = KostalPredbatControlSwitch(data, entry.entry_id)
     charge_start_switch = KostalChargeStartSwitch(data, entry.entry_id, predbat_switch)
+    discharge_start_switch = KostalDischargeStartSwitch(data, entry.entry_id)
+    block_discharge_switch = KostalBlockDischargeSwitch(data, entry.entry_id)
+    block_charge_switch = KostalBlockChargeSwitch(data, entry.entry_id)
+    exclusive_switches = [
+        charge_start_switch,
+        discharge_start_switch,
+        block_discharge_switch,
+        block_charge_switch,
+    ]
+    for switch in exclusive_switches:
+        switch.set_related_switches(exclusive_switches)
 
     entities = [
         charge_start_switch,
-        KostalDischargeStartSwitch(data, entry.entry_id),
-        KostalBlockDischargeSwitch(data, entry.entry_id),
-        KostalBlockChargeSwitch(data, entry.entry_id),
+        discharge_start_switch,
+        block_discharge_switch,
+        block_charge_switch,
         KostalEMSSwitch(data, entry.entry_id, charge_start_switch),
         predbat_switch,
         # I/O Board outputs (hidden by default)
@@ -108,6 +119,11 @@ class KostalBaseSwitch(SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the switch on."""
+        if self._attr_is_on:
+            _LOGGER.debug("%s turn_on ignored because switch is already on", self.name)
+            self.async_write_ha_state()
+            return
+
         # Ensure mutually exclusive behavior
         for switch in self._related_switches:
             if switch is not self and switch.is_on:
@@ -138,10 +154,13 @@ class KostalBaseSwitch(SwitchEntity):
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the switch off."""
+        if not self._attr_is_on:
+            self.async_write_ha_state()
+            return
+
         if self._remove_timer:
             self._remove_timer()
             self._remove_timer = None
-        
         self._attr_is_on = False
         await self._stop_action()
         self.async_write_ha_state()
@@ -181,7 +200,58 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         self._predbat_switch = predbat_switch
         self._predbat_was_charging: bool | None = None
         self._predbat_transition_time: float | None = None
+        self._predbat_startup_block_until: float | None = None
         self._predbat_discharge_blocked: bool = False
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        if self._predbat_switch is not None and self._predbat_switch.is_on:
+            self._predbat_startup_block_until = time.time() + 15.0
+        else:
+            self._predbat_startup_block_until = None
+        await super().async_turn_on(**kwargs)
+
+    def _predbat_startup_write_blocked(self) -> bool:
+        if self._predbat_startup_block_until is None:
+            return False
+        remaining = self._predbat_startup_block_until - time.time()
+        if remaining > 0:
+            _LOGGER.debug("Predbat Control: write to %s blocked for %.0fs more", self._data.charge_discharge_reg, remaining)
+            return True
+        self._predbat_startup_block_until = None
+        return False
+
+    async def _start_loop(self) -> None:
+        """Custom startup for Charge Start in Predbat mode.
+
+        With Predbat enabled, wait 15 seconds before making the first decision
+        to charge or hold. Reads may continue, but no write to 1028 happens
+        until the decision is taken.
+        """
+        if self._predbat_switch is not None and self._predbat_switch.is_on:
+            await asyncio.sleep(15.0)
+            if not self._attr_is_on:
+                return
+
+            state = self.hass.states.get("binary_sensor.predbat_charging")
+            is_charging = state is not None and state.state == "on"
+
+            if is_charging:
+                _LOGGER.info("Predbat Control: startup decision = charge")
+                self._predbat_was_charging = True
+                self._predbat_transition_time = None
+            else:
+                _LOGGER.info("Predbat Control: startup decision = hold")
+                self._predbat_was_charging = False
+                self._predbat_transition_time = time.time()
+
+            await self._loop_action()
+            if self._attr_is_on:
+                self._remove_timer = async_track_time_interval(
+                    self.hass, self._loop_action, timedelta(seconds=self._loop_interval)
+                )
+            return
+
+        await super()._start_loop()
 
     async def _loop_action(self, *args):
         if not self._attr_is_on:
@@ -213,8 +283,14 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                 charge_pct = min(charge_pct, self._data.ems_charge_limit_pct)
             if not self._attr_is_on:
                 return
+            if self._predbat_startup_write_blocked():
+                return
             await self._data.handler.write_float(self._data.charge_discharge_reg, -charge_pct)
             return
+
+        if self._predbat_was_charging is None:
+            self._predbat_was_charging = False
+            self._predbat_transition_time = time.time()
 
         # Not charging
         if self._predbat_was_charging is True:
@@ -224,12 +300,6 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
             self._predbat_transition_time = time.time()
             self._predbat_was_charging = False
             return
-
-        if self._predbat_was_charging is None:
-            # First tick — wait 15s for predbat_charging to settle, then decide immediately
-            _LOGGER.info("Predbat Control: starting — waiting 15s for predbat_charging to settle")
-            self._predbat_was_charging = False
-            self._predbat_transition_time = time.time() - 30.0  # 45-30 = 15s remaining
 
         # Check 45s wait after charge stopped
         elapsed = time.time() - (self._predbat_transition_time or 0.0)
@@ -294,6 +364,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
             await self._data.handler.write_float(REG_DISCHARGE_RATE, self._max_discharge_watts())
         self._predbat_was_charging = None
         self._predbat_transition_time = None
+        self._predbat_startup_block_until = None
         # Close the Modbus connection so the inverter sees a clean disconnect.
         # It will reconnect automatically on the next read/write.
         await self._data.handler.close()
