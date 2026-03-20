@@ -13,7 +13,9 @@ from homeassistant.const import (
     UnitOfPower,
     UnitOfElectricPotential,
     UnitOfElectricCurrent,
-    UnitOfTemperature,    UnitOfEnergy,)
+    UnitOfTemperature,
+    UnitOfEnergy,
+)
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -23,6 +25,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from . import KostalCoordinator
 from .const import (
     DOMAIN,
+    REG_TOTAL_HOME_CONSUMPTION,
     REG_BATTERY_SOC,
     REG_BATTERY_POWER,
     REG_BATTERY_VOLTAGE,
@@ -45,6 +48,7 @@ from .const import (
     REG_CURRENT_PHASE2,
     REG_CURRENT_PHASE3,
     REG_SENSOR_TYPE,
+    SENSOR_TOTAL_HOME_CONSUMPTION,
     SENSOR_BATTERY_SOC,
     SENSOR_BATTERY_POWER,
     SENSOR_BATTERY_VOLTAGE,
@@ -86,6 +90,7 @@ async def async_setup_entry(
     coordinator = data.coordinator
 
     entities = [
+        KostalTotalHomeConsumptionSensor(coordinator, entry.entry_id),
         KostalBatterySoCSensor(coordinator, entry.entry_id),
         KostalBatteryPowerSensor(coordinator, entry.entry_id),
         KostalBatteryVoltageSensor(coordinator, entry.entry_id),
@@ -153,6 +158,15 @@ class KostalBatterySoCSensor(KostalBaseSensor):
     _attr_device_class = SensorDeviceClass.BATTERY
     _attr_native_unit_of_measurement = PERCENTAGE
     _attr_state_class = SensorStateClass.MEASUREMENT
+
+
+class KostalTotalHomeConsumptionSensor(KostalBaseSensor):
+    _key = SENSOR_TOTAL_HOME_CONSUMPTION
+    _name = "Total Home Consumption"
+    _address = REG_TOTAL_HOME_CONSUMPTION
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_native_unit_of_measurement = UnitOfEnergy.WATT_HOUR
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
 
 class KostalBatteryPowerSensor(KostalBaseSensor):
     _key = SENSOR_BATTERY_POWER
