@@ -218,7 +218,7 @@ class KostalBaseSwitch(SwitchEntity):
         net_load_after_pv_watts = total_active_power + battery_power
         target_watts = max(0.0, net_load_after_pv_watts)
         target_pct = min(100.0, (target_watts / max_discharge_watts) * 100.0)
-        rounded_target_pct = round(target_pct)
+        rounded_target_pct = round(target_pct, 1)
 
         _LOGGER.debug(
             "Stop setpoint: total_active_power=%.1fW battery_power=%.1fW net_load_after_pv=%.1fW max_discharge=%.1fW stop_pct=%s%%",
@@ -539,7 +539,7 @@ class KostalEMSSwitch(KostalBaseSwitch):
         else:
             self._ems_smoothed_limit = EMA_ALPHA * raw_pct + (1 - EMA_ALPHA) * self._ems_smoothed_limit
 
-        target_pct = round(self._ems_smoothed_limit)
+        target_pct = round(self._ems_smoothed_limit, 1)
 
         if target_pct == 0.0:
             new_status = "Blocked"

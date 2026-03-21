@@ -373,6 +373,7 @@ class KostalEMSChargeLimitSensor(SensorEntity):
     _attr_device_class = SensorDeviceClass.POWER_FACTOR
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_suggested_display_precision = 1
     _attr_icon = "mdi:lightning-bolt"
 
     def __init__(self, data, entry_id: str) -> None:
@@ -389,7 +390,7 @@ class KostalEMSChargeLimitSensor(SensorEntity):
     def native_value(self) -> float | None:
         if self._data.ems_status == "Inactive":
             return None
-        return self._data.ems_charge_limit_pct
+        return round(self._data.ems_charge_limit_pct, 1)
 
     async def async_added_to_hass(self) -> None:
         self.async_on_remove(
