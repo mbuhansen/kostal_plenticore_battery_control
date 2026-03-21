@@ -214,17 +214,17 @@ class KostalBaseSwitch(SwitchEntity):
 
         # Gridpoint meter: import is positive, feed-in is negative.
         # Battery power is negative while charging and positive while discharging.
-        # Summing them estimates the house load before battery contribution.
-        house_load_estimate_watts = total_active_power + battery_power
-        target_watts = max(0.0, house_load_estimate_watts)
+        # Summing them estimates the net load after PV contribution.
+        net_load_after_pv_watts = total_active_power + battery_power
+        target_watts = max(0.0, net_load_after_pv_watts)
         target_pct = min(100.0, (target_watts / max_discharge_watts) * 100.0)
-        rounded_target_pct = round(target_pct, 1)
+        rounded_target_pct = round(target_pct)
 
         _LOGGER.debug(
-            "Stop setpoint: total_active_power=%.1fW battery_power=%.1fW house_load_estimate=%.1fW max_discharge=%.1fW stop_pct=%.1f%%",
+            "Stop setpoint: total_active_power=%.1fW battery_power=%.1fW net_load_after_pv=%.1fW max_discharge=%.1fW stop_pct=%s%%",
             total_active_power,
             battery_power,
-            house_load_estimate_watts,
+            net_load_after_pv_watts,
             max_discharge_watts,
             rounded_target_pct,
         )
@@ -539,7 +539,7 @@ class KostalEMSSwitch(KostalBaseSwitch):
         else:
             self._ems_smoothed_limit = EMA_ALPHA * raw_pct + (1 - EMA_ALPHA) * self._ems_smoothed_limit
 
-        target_pct = round(self._ems_smoothed_limit, 1)
+        target_pct = round(self._ems_smoothed_limit)
 
         if target_pct == 0.0:
             new_status = "Blocked"
@@ -549,7 +549,7 @@ class KostalEMSSwitch(KostalBaseSwitch):
             new_status = "Ok"
 
         _LOGGER.debug(
-            "EMS: phase=%.1f/%.1f/%.1f A, fuse=%sA, headroom=%.0f W, max_batt=%.0fW → raw=%.1f%% smooth=%.1f%% (%s)",
+            "EMS: phase=%.1f/%.1f/%.1f A, fuse=%sA, headroom=%.0f W, max_batt=%.0fW → raw=%.1f%% smooth=%s%% (%s)",
             phase1, phase2, phase3, fuse_size,
             headroom_watts, max_watts,
             raw_pct, target_pct, new_status,
