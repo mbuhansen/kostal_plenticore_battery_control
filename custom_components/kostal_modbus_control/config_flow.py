@@ -11,13 +11,55 @@ from homeassistant import config_entries
 from homeassistant.const import CONF_HOST
 from homeassistant.data_entry_flow import FlowResult
 
-from homeassistant.helpers.selector import SelectSelector, SelectSelectorConfig, SelectSelectorMode
+from homeassistant.helpers.selector import (
+    EntitySelector,
+    EntitySelectorConfig,
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+)
 
 from .const import (
-    DEFAULT_PORT, DOMAIN, CONF_MODBUS_TIMEOUT, DEFAULT_MODBUS_TIMEOUT, DEFAULT_UNIT_ID,
-    CONF_INVERTER_TYPE, INVERTER_TYPE_HYBRID, INVERTER_TYPE_BI,
-    CONF_MIN_SOC, CONF_MAX_SOC,
-    CONF_KSEM_HOST, KSEM_PORT, KSEM_SLAVE_ID,
+    CONF_ACTIVE_HYSTERESIS_W,
+    CONF_ACTIVE_MAX_POWER_W,
+    CONF_IDLE_HYSTERESIS_W,
+    CONF_IDLE_MAX_POWER_W,
+    CONF_INV1_MAX_POWER_W,
+    CONF_INV1_SOC_BUFFER,
+    CONF_INV2_MIN_SOC,
+    CONF_INVERTER_TYPE,
+    CONF_KSEM_HOST,
+    CONF_MASTER_BLOCK_CHARGE_ENTITY,
+    CONF_MASTER_BLOCK_DISCHARGE_ENTITY,
+    CONF_MASTER_CHARGE_START_ENTITY,
+    CONF_MASTER_DISCHARGE_START_ENTITY,
+    CONF_MAX_SOC,
+    CONF_MIN_SOC,
+    CONF_MODBUS_TIMEOUT,
+    CONF_OPERATING_MODE,
+    CONF_SOURCE_GRID_POWER_ENTITY,
+    CONF_SOURCE_INV1_POWER_ENTITY,
+    CONF_SOURCE_SOC1_ENTITY,
+    DEFAULT_ACTIVE_HYSTERESIS_W,
+    DEFAULT_ACTIVE_MAX_POWER_W,
+    DEFAULT_IDLE_HYSTERESIS_W,
+    DEFAULT_IDLE_MAX_POWER_W,
+    DEFAULT_INV1_MAX_POWER_W,
+    DEFAULT_INV1_SOC_BUFFER,
+    DEFAULT_INV2_MIN_SOC,
+    DEFAULT_MODBUS_TIMEOUT,
+    DEFAULT_PORT,
+    DEFAULT_UNIT_ID,
+    DOMAIN,
+    INVERTER_TYPE_BI,
+    INVERTER_TYPE_HYBRID,
+    KSEM_PORT,
+    KSEM_SLAVE_ID,
+    OPERATING_MODE_HA_INVERTER_CONTROL,
+    OPERATING_MODE_NORMAL,
 )
 from .modbus_handler import KostalModbusHandler
 
@@ -33,6 +75,29 @@ def _soc_selector():
             mode=SelectSelectorMode.DROPDOWN,
         )
     )
+
+
+def _entity_selector(domains: list[str]):
+    return EntitySelector(EntitySelectorConfig(domain=domains))
+
+
+def _number_selector(min_value: float, max_value: float, step: float, unit: str):
+    return NumberSelector(
+        NumberSelectorConfig(
+            min=min_value,
+            max=max_value,
+            step=step,
+            mode=NumberSelectorMode.BOX,
+            unit_of_measurement=unit,
+        )
+    )
+
+
+def _add_option_field(schema: dict, key: str, selector, default: Any | None = None) -> None:
+    if default is None:
+        schema[vol.Optional(key)] = selector
+    else:
+        schema[vol.Optional(key, default=default)] = selector
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Kostal Modbus Control."""
@@ -88,6 +153,15 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             {
                 vol.Required(CONF_HOST): str,
                 vol.Required(CONF_MODBUS_TIMEOUT, default=DEFAULT_MODBUS_TIMEOUT): int,
+                vol.Required(CONF_OPERATING_MODE, default=OPERATING_MODE_NORMAL): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[
+                            {"value": OPERATING_MODE_NORMAL, "label": "Normal"},
+                            {"value": OPERATING_MODE_HA_INVERTER_CONTROL, "label": "HA Inverter Control"},
+                        ],
+                        mode=SelectSelectorMode.LIST,
+                    )
+                ),
                 vol.Required(CONF_INVERTER_TYPE, default=INVERTER_TYPE_HYBRID): SelectSelector(
                     SelectSelectorConfig(
                         options=[
@@ -154,20 +228,65 @@ class KostalOptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
+        operating_mode = self._entry.data.get(CONF_OPERATING_MODE, OPERATING_MODE_NORMAL)
+
         if user_input is not None:
+            if operating_mode == OPERATING_MODE_HA_INVERTER_CONTROL:
+                required_keys = (
+                    CONF_MASTER_CHARGE_START_ENTITY,
+                    CONF_MASTER_DISCHARGE_START_ENTITY,
+                    CONF_MASTER_BLOCK_CHARGE_ENTITY,
+                    CONF_MASTER_BLOCK_DISCHARGE_ENTITY,
+                    CONF_SOURCE_SOC1_ENTITY,
+                    CONF_SOURCE_INV1_POWER_ENTITY,
+                    CONF_SOURCE_GRID_POWER_ENTITY,
+                )
+                missing_keys = [key for key in required_keys if not user_input.get(key)]
+                if missing_keys:
+                    return self.async_show_form(
+                        step_id="init",
+                        data_schema=vol.Schema(self._build_schema()),
+                        errors={"base": "missing_ha_control_fields"},
+                    )
             return self.async_create_entry(title="", data=user_input)
 
-        current = self._entry.options
-        schema = vol.Schema(
-            {
-                vol.Optional(
-                    CONF_MIN_SOC,
-                    default=current.get(CONF_MIN_SOC, ""),
-                ): _soc_selector(),
-                vol.Optional(
-                    CONF_MAX_SOC,
-                    default=current.get(CONF_MAX_SOC, ""),
-                ): _soc_selector(),
-            }
-        )
+        schema = vol.Schema(self._build_schema())
         return self.async_show_form(step_id="init", data_schema=schema)
+
+    def _build_schema(self) -> dict:
+        current = self._entry.options
+        operating_mode = self._entry.data.get(CONF_OPERATING_MODE, OPERATING_MODE_NORMAL)
+
+        schema: dict = {
+            vol.Optional(
+                CONF_MIN_SOC,
+                default=current.get(CONF_MIN_SOC, ""),
+            ): _soc_selector(),
+            vol.Optional(
+                CONF_MAX_SOC,
+                default=current.get(CONF_MAX_SOC, ""),
+            ): _soc_selector(),
+        }
+
+        if operating_mode != OPERATING_MODE_HA_INVERTER_CONTROL:
+            return schema
+
+        switch_selector = _entity_selector(["switch", "input_boolean"])
+        sensor_selector = _entity_selector(["sensor", "number", "input_number"])
+
+        _add_option_field(schema, CONF_MASTER_CHARGE_START_ENTITY, switch_selector, current.get(CONF_MASTER_CHARGE_START_ENTITY))
+        _add_option_field(schema, CONF_MASTER_DISCHARGE_START_ENTITY, switch_selector, current.get(CONF_MASTER_DISCHARGE_START_ENTITY))
+        _add_option_field(schema, CONF_MASTER_BLOCK_CHARGE_ENTITY, switch_selector, current.get(CONF_MASTER_BLOCK_CHARGE_ENTITY))
+        _add_option_field(schema, CONF_MASTER_BLOCK_DISCHARGE_ENTITY, switch_selector, current.get(CONF_MASTER_BLOCK_DISCHARGE_ENTITY))
+        _add_option_field(schema, CONF_SOURCE_SOC1_ENTITY, sensor_selector, current.get(CONF_SOURCE_SOC1_ENTITY))
+        _add_option_field(schema, CONF_SOURCE_INV1_POWER_ENTITY, sensor_selector, current.get(CONF_SOURCE_INV1_POWER_ENTITY))
+        _add_option_field(schema, CONF_SOURCE_GRID_POWER_ENTITY, sensor_selector, current.get(CONF_SOURCE_GRID_POWER_ENTITY))
+        _add_option_field(schema, CONF_INV2_MIN_SOC, _number_selector(0.0, 100.0, 1.0, "%"), current.get(CONF_INV2_MIN_SOC, DEFAULT_INV2_MIN_SOC))
+        _add_option_field(schema, CONF_INV1_SOC_BUFFER, _number_selector(0.0, 100.0, 1.0, "%"), current.get(CONF_INV1_SOC_BUFFER, DEFAULT_INV1_SOC_BUFFER))
+        _add_option_field(schema, CONF_INV1_MAX_POWER_W, _number_selector(0.0, 100000.0, 100.0, "W"), current.get(CONF_INV1_MAX_POWER_W, DEFAULT_INV1_MAX_POWER_W))
+        _add_option_field(schema, CONF_ACTIVE_MAX_POWER_W, _number_selector(0.0, 50000.0, 100.0, "W"), current.get(CONF_ACTIVE_MAX_POWER_W, DEFAULT_ACTIVE_MAX_POWER_W))
+        _add_option_field(schema, CONF_ACTIVE_HYSTERESIS_W, _number_selector(0.0, 5000.0, 10.0, "W"), current.get(CONF_ACTIVE_HYSTERESIS_W, DEFAULT_ACTIVE_HYSTERESIS_W))
+        _add_option_field(schema, CONF_IDLE_MAX_POWER_W, _number_selector(0.0, 50000.0, 100.0, "W"), current.get(CONF_IDLE_MAX_POWER_W, DEFAULT_IDLE_MAX_POWER_W))
+        _add_option_field(schema, CONF_IDLE_HYSTERESIS_W, _number_selector(0.0, 5000.0, 10.0, "W"), current.get(CONF_IDLE_HYSTERESIS_W, DEFAULT_IDLE_HYSTERESIS_W))
+
+        return schema

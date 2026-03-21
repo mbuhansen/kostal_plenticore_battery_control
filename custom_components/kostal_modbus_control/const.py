@@ -5,14 +5,38 @@ CONF_PORT = "port"
 CONF_UNIT_ID = "unit_id"
 CONF_MODBUS_TIMEOUT = "modbus_timeout"  # The configured timeout on the inverter
 CONF_INVERTER_TYPE = "inverter_type"
+CONF_OPERATING_MODE = "operating_mode"
 INVERTER_TYPE_HYBRID = "hybrid"
 INVERTER_TYPE_BI = "bi"
+OPERATING_MODE_NORMAL = "normal"
+OPERATING_MODE_HA_INVERTER_CONTROL = "ha_inverter_control"
 CONF_MIN_SOC = "min_soc"
 CONF_MAX_SOC = "max_soc"
+CONF_MASTER_CHARGE_START_ENTITY = "master_charge_start_entity"
+CONF_MASTER_DISCHARGE_START_ENTITY = "master_discharge_start_entity"
+CONF_MASTER_BLOCK_CHARGE_ENTITY = "master_block_charge_entity"
+CONF_MASTER_BLOCK_DISCHARGE_ENTITY = "master_block_discharge_entity"
+CONF_SOURCE_SOC1_ENTITY = "source_soc1_entity"
+CONF_SOURCE_INV1_POWER_ENTITY = "source_inv1_power_entity"
+CONF_SOURCE_GRID_POWER_ENTITY = "source_grid_power_entity"
+CONF_INV2_MIN_SOC = "inv2_min_soc"
+CONF_INV1_SOC_BUFFER = "inv1_soc_buffer"
+CONF_INV1_MAX_POWER_W = "inv1_max_power_w"
+CONF_ACTIVE_MAX_POWER_W = "active_max_power_w"
+CONF_ACTIVE_HYSTERESIS_W = "active_hysteresis_w"
+CONF_IDLE_MAX_POWER_W = "idle_max_power_w"
+CONF_IDLE_HYSTERESIS_W = "idle_hysteresis_w"
 
 DEFAULT_PORT = 1502
 DEFAULT_UNIT_ID = 71
 DEFAULT_MODBUS_TIMEOUT = 30  # Default inverter timeout setting
+DEFAULT_INV2_MIN_SOC = 5.0
+DEFAULT_INV1_SOC_BUFFER = 60.0
+DEFAULT_INV1_MAX_POWER_W = 12000.0
+DEFAULT_ACTIVE_MAX_POWER_W = 5000.0
+DEFAULT_ACTIVE_HYSTERESIS_W = 100.0
+DEFAULT_IDLE_MAX_POWER_W = 2000.0
+DEFAULT_IDLE_HYSTERESIS_W = 300.0
 
 # Modbus Registers (Holding Registers)
 REG_MODBUS_BYTE_ORDER = 5        # Modbus byte order - U16 (0x05) 0=little-endian CDAB, 1=big-endian ABCD
@@ -143,6 +167,10 @@ SENSOR_BATTERY_MIN_SOC = "battery_min_soc"
 SENSOR_BATTERY_MAX_SOC = "battery_max_soc"
 SENSOR_INVERTER_STATE = "inverter_state"
 SENSOR_INVERTER_STATE_TEXT = "inverter_state_text"
+SENSOR_INVERTER_CONTROL_STATUS = "inverter_control_status"
+SENSOR_INVERTER_CONTROL_TARGET_POWER = "inverter_control_target_power"
+SENSOR_INVERTER_CONTROL_TARGET_PERCENT = "inverter_control_target_percent"
+SENSOR_INVERTER_CONTROL_HOUSE_LOAD = "inverter_control_house_load"
 
 # KSEM (KOSTAL Smart Energy Meter) Modbus configuration
 CONF_KSEM_HOST = "ksem_host"
@@ -157,6 +185,7 @@ SENSOR_KSEM_ENERGY_EXPORTED = "ksem_energy_exported"
 # Dispatcher signal for EMS status updates (append _{entry_id} when used)
 SIGNAL_EMS_STATUS_UPDATED = "kostal_modbus_ems_status"
 SIGNAL_PREDBAT_STATUS_UPDATED = "kostal_modbus_predbat_status"
+SIGNAL_INVERTER_CONTROL_UPDATED = "kostal_modbus_inverter_control"
 
 # Default loop interval in seconds (from automation: usually 15s)
 LOOP_INTERVAL = 15
@@ -180,6 +209,7 @@ SWITCH_BLOCK_CHARGE = "block_charge"
 SWITCH_BLOCK_DISCHARGE = "block_discharge"
 SWITCH_EMS = "ems_grid_protection"
 SWITCH_AUTO_RESUME_ON_RECOVERY = "auto_resume_on_recovery"
+SWITCH_INVERTER_CONTROL = "inverter_control"
 SWITCH_IO_OUTPUT_1 = "io_output_1"
 SWITCH_IO_OUTPUT_2 = "io_output_2"
 SWITCH_IO_OUTPUT_3 = "io_output_3"

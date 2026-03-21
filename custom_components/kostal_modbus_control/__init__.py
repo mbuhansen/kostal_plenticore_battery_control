@@ -13,10 +13,28 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import (
+    CONF_ACTIVE_HYSTERESIS_W,
+    CONF_ACTIVE_MAX_POWER_W,
+    CONF_IDLE_HYSTERESIS_W,
+    CONF_IDLE_MAX_POWER_W,
+    CONF_INV1_MAX_POWER_W,
+    CONF_INV1_SOC_BUFFER,
+    CONF_INV2_MIN_SOC,
     CONF_UNIT_ID,
     DEFAULT_PORT,
+    DEFAULT_ACTIVE_HYSTERESIS_W,
+    DEFAULT_ACTIVE_MAX_POWER_W,
+    DEFAULT_IDLE_HYSTERESIS_W,
+    DEFAULT_IDLE_MAX_POWER_W,
+    DEFAULT_INV1_MAX_POWER_W,
+    DEFAULT_INV1_SOC_BUFFER,
+    DEFAULT_INV2_MIN_SOC,
     DEFAULT_UNIT_ID,
     DOMAIN,
+    CONF_MASTER_BLOCK_CHARGE_ENTITY,
+    CONF_MASTER_BLOCK_DISCHARGE_ENTITY,
+    CONF_MASTER_CHARGE_START_ENTITY,
+    CONF_MASTER_DISCHARGE_START_ENTITY,
     CONF_MODBUS_TIMEOUT,
     DEFAULT_MODBUS_TIMEOUT,
     LOOP_INTERVAL,
@@ -39,7 +57,12 @@ from .const import (
     REG_CHARGE_RATE,
     REG_DISCHARGE_RATE,
     CONF_INVERTER_TYPE,
+    CONF_OPERATING_MODE,
+    CONF_SOURCE_GRID_POWER_ENTITY,
+    CONF_SOURCE_INV1_POWER_ENTITY,
+    CONF_SOURCE_SOC1_ENTITY,
     INVERTER_TYPE_BI,
+    OPERATING_MODE_NORMAL,
     REG_BATTERY_WORK_CAPACITY,
     REG_BATTERY_MGMT_MODE,
     REG_BATTERY_TYPE,
@@ -204,6 +227,27 @@ class KostalData:
             handler = getattr(switch, "handle_connection_restored", None)
             if handler is not None:
                 handler()
+    operating_mode: str = OPERATING_MODE_NORMAL
+    master_charge_start_entity: str | None = None
+    master_discharge_start_entity: str | None = None
+    master_block_charge_entity: str | None = None
+    master_block_discharge_entity: str | None = None
+    source_soc1_entity: str | None = None
+    source_inv1_power_entity: str | None = None
+    source_grid_power_entity: str | None = None
+    inv2_min_soc: float = DEFAULT_INV2_MIN_SOC
+    inv1_soc_buffer: float = DEFAULT_INV1_SOC_BUFFER
+    active_max_power_w: float = DEFAULT_ACTIVE_MAX_POWER_W
+    active_hysteresis_w: float = DEFAULT_ACTIVE_HYSTERESIS_W
+    idle_max_power_w: float = DEFAULT_IDLE_MAX_POWER_W
+    idle_hysteresis_w: float = DEFAULT_IDLE_HYSTERESIS_W
+    inv1_max_power_w: float = DEFAULT_INV1_MAX_POWER_W
+    last_inverter_control_setpoint_w: float | None = None
+    last_inverter_control_mode: str | None = None
+    inverter_control_status: str = "Inactive"
+    inverter_control_target_w: float | None = None
+    inverter_control_target_pct: float | None = None
+    inverter_control_house_load_w: float | None = None
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -274,6 +318,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         inverter_power_class=inverter_power_class,
         charge_discharge_reg=charge_discharge_reg,
         ksem_handler=ksem_handler,
+        operating_mode=entry.data.get(CONF_OPERATING_MODE, OPERATING_MODE_NORMAL),
     )
 
     coordinator = KostalCoordinator(hass, handler, data)
@@ -290,6 +335,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Apply SOC limits from options (if set)
     await _apply_soc_options(handler, entry.options, data)
+    _apply_inverter_control_options(entry.options, data)
 
     # Re-apply SOC limits when options are updated
     entry.async_on_unload(
@@ -324,6 +370,26 @@ async def _async_options_update_listener(hass: HomeAssistant, entry: ConfigEntry
     """Handle options update."""
     data: KostalData = hass.data[DOMAIN][entry.entry_id]
     await _apply_soc_options(data.handler, entry.options, data)
+    _apply_inverter_control_options(entry.options, data)
+
+
+def _apply_inverter_control_options(options: dict, data: KostalData) -> None:
+    """Apply HA inverter control settings from options to runtime data."""
+    data.master_charge_start_entity = options.get(CONF_MASTER_CHARGE_START_ENTITY) or None
+    data.master_discharge_start_entity = options.get(CONF_MASTER_DISCHARGE_START_ENTITY) or None
+    data.master_block_charge_entity = options.get(CONF_MASTER_BLOCK_CHARGE_ENTITY) or None
+    data.master_block_discharge_entity = options.get(CONF_MASTER_BLOCK_DISCHARGE_ENTITY) or None
+    data.source_soc1_entity = options.get(CONF_SOURCE_SOC1_ENTITY) or None
+    data.source_inv1_power_entity = options.get(CONF_SOURCE_INV1_POWER_ENTITY) or None
+    data.source_grid_power_entity = options.get(CONF_SOURCE_GRID_POWER_ENTITY) or None
+
+    data.inv2_min_soc = float(options.get(CONF_INV2_MIN_SOC, DEFAULT_INV2_MIN_SOC))
+    data.inv1_soc_buffer = float(options.get(CONF_INV1_SOC_BUFFER, DEFAULT_INV1_SOC_BUFFER))
+    data.active_max_power_w = float(options.get(CONF_ACTIVE_MAX_POWER_W, DEFAULT_ACTIVE_MAX_POWER_W))
+    data.active_hysteresis_w = float(options.get(CONF_ACTIVE_HYSTERESIS_W, DEFAULT_ACTIVE_HYSTERESIS_W))
+    data.idle_max_power_w = float(options.get(CONF_IDLE_MAX_POWER_W, DEFAULT_IDLE_MAX_POWER_W))
+    data.idle_hysteresis_w = float(options.get(CONF_IDLE_HYSTERESIS_W, DEFAULT_IDLE_HYSTERESIS_W))
+    data.inv1_max_power_w = float(options.get(CONF_INV1_MAX_POWER_W, DEFAULT_INV1_MAX_POWER_W))
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""

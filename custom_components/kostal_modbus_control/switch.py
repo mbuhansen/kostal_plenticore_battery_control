@@ -16,8 +16,10 @@ from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import (
+    CONF_OPERATING_MODE,
     DOMAIN,
     LOOP_INTERVAL,
+    OPERATING_MODE_HA_INVERTER_CONTROL,
     PREDBAT_CHARGE_START_DELTA,
     PREDBAT_HOLD_DELTA,
     REG_CHARGE_RATE,
@@ -41,6 +43,8 @@ from .const import (
     SWITCH_BLOCK_DISCHARGE,
     SWITCH_DISCHARGE_START,
     SWITCH_EMS,
+    SWITCH_INVERTER_CONTROL,
+    SWITCH_AUTO_RESUME_ON_RECOVERY,
     SWITCH_IO_OUTPUT_1,
     PREDBAT_MODE_ENTITY,
     PREDBAT_ACTIVE_MODES,
@@ -50,6 +54,7 @@ from .const import (
     EMS_SAFETY_MARGIN,
     EMS_PHASE_VOLTAGE,
     SIGNAL_EMS_STATUS_UPDATED,
+    SIGNAL_INVERTER_CONTROL_UPDATED,
     SIGNAL_PREDBAT_STATUS_UPDATED,
 )
 from .modbus_handler import KostalModbusHandler
@@ -95,6 +100,10 @@ async def async_setup_entry(
         block_discharge_switch,
         block_charge_switch,
     ]
+    inverter_control_switch = None
+    if entry.data.get(CONF_OPERATING_MODE) == OPERATING_MODE_HA_INVERTER_CONTROL:
+        inverter_control_switch = KostalInverterControlSwitch(data, entry.entry_id)
+        exclusive_switches.append(inverter_control_switch)
     for switch in exclusive_switches:
         switch.set_related_switches(exclusive_switches)
 
@@ -110,6 +119,8 @@ async def async_setup_entry(
         KostalIOOutputSwitch(data, entry.entry_id, SWITCH_IO_OUTPUT_3, "I/O Output 3", REG_IO_OUTPUT_3),
         KostalIOOutputSwitch(data, entry.entry_id, SWITCH_IO_OUTPUT_4, "I/O Output 4", REG_IO_OUTPUT_4),
     ]
+    if inverter_control_switch is not None:
+        entities.append(inverter_control_switch)
     async_add_entities(entities)
 
 class KostalBaseSwitch(SwitchEntity):
@@ -1081,8 +1092,247 @@ class KostalEMSSwitch(KostalBaseSwitch, RestoreEntity):
         self._set_ems_status("Inactive")
         # EMS does NOT write to Modbus — nothing is written unless a charge switch is active
 
+
+class KostalInverterControlSwitch(KostalBaseSwitch):
+    _key = SWITCH_INVERTER_CONTROL
+    _name = "Inverter Control"
+    _auto_resume_on_recovery = True
+
+    def _publish_state(
+        self,
+        status: str,
+        *,
+        target_watts: float | None = None,
+        target_pct: float | None = None,
+        house_load: float | None = None,
+    ) -> None:
+        self._data.inverter_control_status = status
+        self._data.inverter_control_target_w = target_watts
+        self._data.inverter_control_target_pct = target_pct
+        self._data.inverter_control_house_load_w = house_load
+        async_dispatcher_send(self.hass, f"{SIGNAL_INVERTER_CONTROL_UPDATED}_{self._entry_id}")
+
+    def _control_inputs(self) -> dict[str, float] | None:
+        coordinator = self._data.coordinator
+        if coordinator is None or coordinator.data is None:
+            _LOGGER.debug("Inverter Control: no coordinator data available")
+            return None
+
+        soc2 = coordinator.data.get(REG_BATTERY_SOC)
+        inv2_power = coordinator.data.get(REG_BATTERY_POWER)
+        soc1 = self._get_float_state(self._data.source_soc1_entity)
+        inv1_power = self._get_float_state(self._data.source_inv1_power_entity)
+        grid_power = self._get_float_state(self._data.source_grid_power_entity)
+
+        if None in (soc1, soc2, inv1_power, inv2_power, grid_power):
+            _LOGGER.debug(
+                "Inverter Control: insufficient control data soc1=%s soc2=%s inv1_power=%s inv2_power=%s grid_power=%s",
+                soc1,
+                soc2,
+                inv1_power,
+                inv2_power,
+                grid_power,
+            )
+            return None
+
+        house_load = inv1_power + inv2_power + grid_power
+        return {
+            "soc1": float(soc1),
+            "soc2": float(soc2),
+            "inv1_power": float(inv1_power),
+            "inv2_power": float(inv2_power),
+            "grid_power": float(grid_power),
+            "house_load": float(house_load),
+        }
+
+    def _get_float_state(self, entity_id: str | None) -> float | None:
+        if not entity_id:
+            return None
+        state = self.hass.states.get(entity_id)
+        if state is None or state.state in {"unknown", "unavailable", "none", "None"}:
+            return None
+        try:
+            return float(state.state)
+        except (TypeError, ValueError):
+            return None
+
+    def _get_bool_state(self, entity_id: str | None) -> bool | None:
+        if not entity_id:
+            return None
+        state = self.hass.states.get(entity_id)
+        if state is None or state.state in {"unknown", "unavailable"}:
+            return None
+        return state.state == "on"
+
+    def _master_mode(self) -> str | None:
+        states = {
+            "block_charge": self._get_bool_state(self._data.master_block_charge_entity),
+            "block_discharge": self._get_bool_state(self._data.master_block_discharge_entity),
+            "charge": self._get_bool_state(self._data.master_charge_start_entity),
+            "discharge": self._get_bool_state(self._data.master_discharge_start_entity),
+        }
+        if any(value is None for value in states.values()):
+            _LOGGER.debug("Inverter Control: missing master switch state %s", states)
+            return None
+        if states["block_charge"]:
+            return "block_charge"
+        if states["block_discharge"]:
+            return "block_discharge"
+        if states["charge"]:
+            return "charge"
+        if states["discharge"]:
+            return "discharge"
+        return "idle"
+
+    def _discharge_target_watts(self, limit_watts: float) -> float | None:
+        inputs = self._control_inputs()
+        if inputs is None:
+            return None
+
+        house_load = max(0.0, inputs["house_load"])
+        if house_load <= 0.0:
+            return 0.0
+
+        discharge_limit = min(limit_watts, self._max_discharge_watts())
+        if discharge_limit <= 0.0:
+            return 0.0
+
+        if inputs["soc2"] > self._data.inv2_min_soc:
+            return min(house_load, discharge_limit)
+
+        if inputs["soc1"] > self._data.inv1_soc_buffer:
+            return 0.0
+
+        soc2_headroom = max(0.0, inputs["soc2"] - self._data.inv2_min_soc)
+        soc1_headroom = max(0.0, inputs["soc1"] - self._data.inv1_soc_buffer)
+        inv2_available = (soc2_headroom / 100.0) * discharge_limit
+        inv1_available = (soc1_headroom / 100.0) * max(self._data.inv1_max_power_w, 0.0)
+        total_available = inv2_available + inv1_available
+        if total_available <= 0.0 or inv2_available <= 0.0:
+            return 0.0
+
+        share2 = inv2_available / total_available
+        return min(house_load * share2, discharge_limit)
+
+    def _charge_target_watts(self, limit_watts: float, force_charge: bool) -> float | None:
+        inputs = self._control_inputs()
+        if inputs is None:
+            return None
+
+        charge_limit = min(limit_watts, self._max_charge_watts())
+        if charge_limit <= 0.0:
+            return 0.0
+
+        export_surplus = max(0.0, -inputs["house_load"])
+        if export_surplus > 0.0:
+            return -min(export_surplus, charge_limit)
+
+        if force_charge:
+            return -charge_limit
+
+        return 0.0
+
+    def _idle_target_watts(self) -> float | None:
+        inputs = self._control_inputs()
+        if inputs is None:
+            return None
+
+        if inputs["house_load"] < 0.0:
+            return self._charge_target_watts(self._data.idle_max_power_w, force_charge=False)
+
+        return self._discharge_target_watts(self._data.idle_max_power_w)
+
+    def _active_target_watts(self, mode: str) -> float | None:
+        if mode == "charge":
+            return self._charge_target_watts(self._data.active_max_power_w, force_charge=True)
+        if mode == "discharge":
+            return self._discharge_target_watts(self._data.active_max_power_w)
+        return None
+
+    def _smoothed_target_watts(self, proposed_watts: float, hysteresis_w: float, mode: str) -> float:
+        last_mode = self._data.last_inverter_control_mode
+        last_target = self._data.last_inverter_control_setpoint_w
+        if last_target is None or last_mode != mode or abs(proposed_watts - last_target) > hysteresis_w:
+            self._data.last_inverter_control_setpoint_w = proposed_watts
+            self._data.last_inverter_control_mode = mode
+            return proposed_watts
+        return last_target
+
+    def _pct_from_target_watts(self, target_watts: float) -> float:
+        if target_watts > 0.0:
+            max_discharge_watts = self._max_discharge_watts()
+            if max_discharge_watts <= 0.0:
+                return 0.0
+            return round(min(100.0, (target_watts / max_discharge_watts) * 100.0))
+        if target_watts < 0.0:
+            max_charge_watts = self._max_charge_watts()
+            if max_charge_watts <= 0.0:
+                return 0.0
+            return -round(min(100.0, (abs(target_watts) / max_charge_watts) * 100.0))
+        return 0.0
+
+    async def _loop_action(self, *args):
+        mode = self._master_mode()
+        if mode is None:
+            self._publish_state("Unavailable")
+            await self._data.handler.write_float(self._data.charge_discharge_reg, 0.0)
+            return
+
+        if mode == "block_charge":
+            self._data.last_inverter_control_mode = mode
+            self._publish_state("Block Charge", target_watts=0.0, target_pct=0.0)
+            await self._data.handler.write_float(REG_CHARGE_RATE, 0.0)
+            return
+        if mode == "block_discharge":
+            self._data.last_inverter_control_mode = mode
+            self._publish_state("Block Discharge", target_watts=0.0, target_pct=0.0)
+            await self._data.handler.write_float(REG_DISCHARGE_RATE, 0.0)
+            return
+
+        inputs = self._control_inputs()
+        house_load = inputs["house_load"] if inputs is not None else None
+
+        if mode == "idle":
+            proposed_watts = self._idle_target_watts()
+            hysteresis_w = self._data.idle_hysteresis_w
+            status = "Idle Assist"
+        else:
+            proposed_watts = self._active_target_watts(mode)
+            hysteresis_w = self._data.active_hysteresis_w
+            status = "Charge" if mode == "charge" else "Discharge"
+
+        if proposed_watts is None:
+            self._publish_state("Unavailable", house_load=house_load)
+            await self._data.handler.write_float(self._data.charge_discharge_reg, 0.0)
+            return
+
+        target_watts = self._smoothed_target_watts(proposed_watts, hysteresis_w, mode)
+        target_pct = self._pct_from_target_watts(target_watts)
+        self._publish_state(status, target_watts=target_watts, target_pct=target_pct, house_load=house_load)
+
+        _LOGGER.debug(
+            "Inverter Control: mode=%s proposed_watts=%.1f target_watts=%.1f target_pct=%s%%",
+            mode,
+            proposed_watts,
+            target_watts,
+            target_pct,
+        )
+        await self._data.handler.write_float(self._data.charge_discharge_reg, target_pct)
+
+    async def _stop_action(self):
+        self._data.last_stop_time = time.time()
+        if self._data.last_inverter_control_mode == "block_charge":
+            await self._data.handler.write_float(REG_CHARGE_RATE, self._max_charge_watts())
+        elif self._data.last_inverter_control_mode == "block_discharge":
+            await self._data.handler.write_float(REG_DISCHARGE_RATE, self._max_discharge_watts())
+        await self._data.handler.write_float(self._data.charge_discharge_reg, 0.0)
+        self._data.last_inverter_control_mode = None
+        self._data.last_inverter_control_setpoint_w = None
+        self._publish_state("Inactive")
+        await self._data.handler.close()
+
     def _on_communication_fault(self) -> None:
-        self._ems_smoothed_limit = None
+        self._publish_state("Unavailable")
 
 
 class KostalIOOutputSwitch(SwitchEntity, RestoreEntity):
