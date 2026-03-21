@@ -1323,12 +1323,12 @@ class KostalInverterControlSwitch(KostalBaseSwitch):
             max_discharge_watts = self._max_discharge_watts()
             if max_discharge_watts <= 0.0:
                 return 0.0
-            return round(min(100.0, (target_watts / max_discharge_watts) * 100.0))
+            return round(min(100.0, (target_watts / max_discharge_watts) * 100.0), 1)
         if target_watts < 0.0:
             max_charge_watts = self._max_charge_watts()
             if max_charge_watts <= 0.0:
                 return 0.0
-            return -round(min(100.0, (abs(target_watts) / max_charge_watts) * 100.0))
+            return -round(min(100.0, (abs(target_watts) / max_charge_watts) * 100.0), 1)
         return 0.0
 
     async def _loop_action(self, *args):
