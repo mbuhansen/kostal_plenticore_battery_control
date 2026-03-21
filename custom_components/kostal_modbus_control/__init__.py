@@ -138,6 +138,7 @@ class KostalData:
     charge_discharge_reg: int = REG_CHARGE_DISCHARGE_LIMIT
     min_soc: float | None = None
     max_soc: float | None = None
+    debug_discharge_logging: bool = False
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

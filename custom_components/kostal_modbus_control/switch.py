@@ -39,6 +39,7 @@ from .const import (
     SWITCH_DISCHARGE_START,
     SWITCH_EMS,
     SWITCH_PREDBAT_CONTROL,
+    SWITCH_DEBUG_DISCHARGE_LOGGING,
     SWITCH_IO_OUTPUT_1,
     SWITCH_IO_OUTPUT_2,
     SWITCH_IO_OUTPUT_3,
@@ -60,6 +61,7 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][entry.entry_id]
     
     predbat_switch = KostalPredbatControlSwitch(data, entry.entry_id)
+    debug_discharge_logging_switch = KostalDebugDischargeLoggingSwitch(data, entry.entry_id)
     charge_start_switch = KostalChargeStartSwitch(data, entry.entry_id, predbat_switch)
     discharge_start_switch = KostalDischargeStartSwitch(data, entry.entry_id)
     block_discharge_switch = KostalBlockDischargeSwitch(data, entry.entry_id)
@@ -80,6 +82,7 @@ async def async_setup_entry(
         block_charge_switch,
         KostalEMSSwitch(data, entry.entry_id, charge_start_switch),
         predbat_switch,
+        debug_discharge_logging_switch,
         # I/O Board outputs (hidden by default)
         KostalIOOutputSwitch(data, entry.entry_id, SWITCH_IO_OUTPUT_1, "I/O Output 1", REG_IO_OUTPUT_1),
         KostalIOOutputSwitch(data, entry.entry_id, SWITCH_IO_OUTPUT_2, "I/O Output 2", REG_IO_OUTPUT_2),
@@ -179,6 +182,37 @@ class KostalBaseSwitch(SwitchEntity):
         if coordinator is not None and coordinator.data is not None:
             return coordinator.data.get(REG_BATTERY_MAX_CHARGE_LIMIT) or 0.0
         return 0.0
+
+    def _current_discharge_limit_watts(self) -> float:
+        """Read the currently applied discharge limit from register 1040."""
+        coordinator = self._data.coordinator
+        if coordinator is not None and coordinator.data is not None:
+            return coordinator.data.get(REG_DISCHARGE_RATE) or 0.0
+        return 0.0
+
+    def _debug_log_discharge_limit(self, message: str, *args: Any) -> None:
+        """Emit detailed register 1040 logs only when debug logging is enabled."""
+        if self._data.debug_discharge_logging:
+            _LOGGER.info("1040 debug: " + message, *args)
+
+    async def _restore_max_discharge_limit(self) -> bool:
+        """Restore register 1040 to the battery's current maximum discharge limit."""
+        max_discharge_watts = self._max_discharge_watts()
+        if max_discharge_watts <= 0.0:
+            _LOGGER.warning(
+                "Predbat Control: cannot restore discharge limit because max discharge is unavailable"
+            )
+            self._debug_log_discharge_limit(
+                "restore skipped because battery max discharge limit is unavailable"
+            )
+            return False
+
+        self._debug_log_discharge_limit(
+            "writing %.1f W to REG_DISCHARGE_RATE from battery max discharge limit",
+            max_discharge_watts,
+        )
+        await self._data.handler.write_float(REG_DISCHARGE_RATE, max_discharge_watts)
+        return True
 
     def _stop_discharge_pct_from_active_power(self) -> float:
         """Estimate a discharge setpoint from grid-point power and current battery power.
@@ -330,6 +364,14 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                 _LOGGER.info("Predbat Control: predbat_charging ON — charging")
                 self._predbat_transition_time = None
                 self._predbat_was_charging = True
+            if self._predbat_discharge_blocked or self._current_discharge_limit_watts() <= 0.0:
+                self._debug_log_discharge_limit(
+                    "predbat charging active, restoring discharge limit; blocked=%s current_limit=%.1f W",
+                    self._predbat_discharge_blocked,
+                    self._current_discharge_limit_watts(),
+                )
+                if await self._restore_max_discharge_limit():
+                    self._predbat_discharge_blocked = False
             charge_pct = abs(self._data.charge_rate)
             if self._data.ems_status != "Inactive":
                 charge_pct = min(charge_pct, self._data.ems_charge_limit_pct)
@@ -394,15 +436,22 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                     soc, floor,
                 )
                 self._predbat_discharge_blocked = True
+            self._debug_log_discharge_limit(
+                "predbat hold mode writing 0.0 W because SOC %.1f%% <= floor %.1f%%",
+                soc,
+                floor,
+            )
             await self._data.handler.write_float(REG_DISCHARGE_RATE, 0.0)
         else:
-            # Above floor — inverter runs freely, send nothing
-            if self._predbat_discharge_blocked:
+            # Above floor — restore free discharge if 1040 was previously forced to zero.
+            discharge_limit_is_blocked = self._current_discharge_limit_watts() <= 0.0
+            if self._predbat_discharge_blocked or discharge_limit_is_blocked:
                 _LOGGER.info(
                     "Predbat Control: SOC=%.1f%% > floor=%.1f%% — releasing inverter",
                     soc, floor,
                 )
-                self._predbat_discharge_blocked = False
+                if await self._restore_max_discharge_limit():
+                    self._predbat_discharge_blocked = False
 
     async def _stop_action(self):
         # Only write a stop setpoint to 1028 if we were actually charging.
@@ -415,7 +464,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         self._data.last_stop_time = time.time()
         if self._predbat_discharge_blocked:
             self._predbat_discharge_blocked = False
-            await self._data.handler.write_float(REG_DISCHARGE_RATE, self._max_discharge_watts())
+            await self._restore_max_discharge_limit()
         self._predbat_was_charging = None
         self._predbat_transition_time = None
         self._predbat_startup_block_until = None
@@ -428,6 +477,8 @@ class KostalDischargeStartSwitch(KostalBaseSwitch):
     _name = "Discharge Start"
 
     async def _loop_action(self, *args):
+        if not self._attr_is_on:
+            return
         await self._data.handler.write_float(self._data.charge_discharge_reg, abs(self._data.discharge_rate))
 
     async def _stop_action(self):
@@ -442,12 +493,20 @@ class KostalBlockDischargeSwitch(KostalBaseSwitch):
     _name = "Block Discharge"
 
     async def _loop_action(self, *args):
+        if not self._attr_is_on:
+            self._debug_log_discharge_limit("block discharge loop skipped because switch is off")
+            return
         # Write discharge rate 0 to Block Discharge (1040)
         # MUST BE POSITIVE (0 is positive)
+        self._debug_log_discharge_limit("block discharge switch writing 0.0 W")
         await self._data.handler.write_float(REG_DISCHARGE_RATE, 0.0)
 
     async def _stop_action(self):
         self._data.last_stop_time = time.time()
+        self._debug_log_discharge_limit(
+            "block discharge switch turning off, restoring %.1f W",
+            self._max_discharge_watts(),
+        )
         await self._data.handler.write_float(REG_DISCHARGE_RATE, self._max_discharge_watts())
         await self._data.handler.close()
 
@@ -456,6 +515,8 @@ class KostalBlockChargeSwitch(KostalBaseSwitch):
     _name = "Block Charge"
 
     async def _loop_action(self, *args):
+        if not self._attr_is_on:
+            return
         # Write 0 to charge rate (Block Charge) via 1038
         # MUST BE POSITIVE (0 is positive)
         await self._data.handler.write_float(REG_CHARGE_RATE, 0.0)
@@ -495,6 +556,8 @@ class KostalEMSSwitch(KostalBaseSwitch):
 
     async def _loop_action(self, *args) -> None:
         """Calculate max safe charge power — only when Charge Start is active."""
+        if not self._attr_is_on:
+            return
         if not self._charge_start_switch.is_on:
             return
 
@@ -592,6 +655,46 @@ class KostalPredbatControlSwitch(KostalBaseSwitch, RestoreEntity):
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         self._attr_is_on = False
+        self.async_write_ha_state()
+
+
+class KostalDebugDischargeLoggingSwitch(SwitchEntity, RestoreEntity):
+    """Config switch to enable verbose logging around discharge limit register 1040."""
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_entity_category = EntityCategory.CONFIG
+    _key = SWITCH_DEBUG_DISCHARGE_LOGGING
+    _name = "Debug Discharge Logging"
+
+    def __init__(self, data, entry_id: str) -> None:
+        self._data = data
+        self._entry_id = entry_id
+        self._attr_unique_id = f"{entry_id}_{self._key}"
+        self._attr_name = self._name
+        self._attr_is_on = bool(self._data.debug_discharge_logging)
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(identifiers={(DOMAIN, self._entry_id)})
+
+    async def async_added_to_hass(self) -> None:
+        last = await self.async_get_last_state()
+        if last is not None:
+            self._attr_is_on = last.state == "on"
+        self._data.debug_discharge_logging = self._attr_is_on
+        self.async_write_ha_state()
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        self._attr_is_on = True
+        self._data.debug_discharge_logging = True
+        _LOGGER.info("1040 debug logging enabled")
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        _LOGGER.info("1040 debug logging disabled")
+        self._attr_is_on = False
+        self._data.debug_discharge_logging = False
         self.async_write_ha_state()
 
 
