@@ -126,8 +126,8 @@ PLATFORMS: list[Platform] = [Platform.SWITCH, Platform.NUMBER, Platform.SENSOR]
 class KostalData:
     handler: KostalModbusHandler
     coordinator: KostalCoordinator | None = None
-    charge_rate: float = 5000.0
-    discharge_rate: float = 5000.0
+    charge_rate: float = 100.0
+    discharge_rate: float = 100.0
     fuse_size: float = 25.0
     last_stop_time: float = 0.0
     inverter_timeout: int = DEFAULT_MODBUS_TIMEOUT
@@ -227,7 +227,7 @@ async def _apply_soc_options(handler, options: dict, data: "KostalData | None" =
         raw = options.get(conf_key, "")
         if raw:
             try:
-                val = float(raw)
+                val = max(0.0, min(100.0, float(raw)))
                 if data is not None:
                     setattr(data, attr, val)
                 await handler.write_float(reg, val)

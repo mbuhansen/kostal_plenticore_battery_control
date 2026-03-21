@@ -65,6 +65,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except Exception:
                 errors["base"] = "cannot_connect"
             else:
+                await self.async_set_unique_id(user_input[CONF_HOST])
+                self._abort_if_unique_id_configured()
                 title = f"Kostal {user_input[CONF_HOST]}"
                 return self.async_create_entry(title=title, data=user_input)
 
