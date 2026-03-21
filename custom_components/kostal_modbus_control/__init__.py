@@ -15,6 +15,12 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .const import (
     CONF_ACTIVE_HYSTERESIS_W,
     CONF_ACTIVE_MAX_POWER_W,
+    CONF_EXTERNAL_CONTROL_EMA_ALPHA,
+    CONF_EXTERNAL_CONTROL_HYSTERESIS_W,
+    CONF_EXTERNAL_CONTROL_MAX_CHARGE_W,
+    CONF_EXTERNAL_CONTROL_MAX_DISCHARGE_W,
+    CONF_GRID_DEADBAND_W,
+    CONF_GRID_TARGET_W,
     CONF_IDLE_HYSTERESIS_W,
     CONF_IDLE_MAX_POWER_W,
     CONF_INV1_MAX_POWER_W,
@@ -24,6 +30,12 @@ from .const import (
     DEFAULT_PORT,
     DEFAULT_ACTIVE_HYSTERESIS_W,
     DEFAULT_ACTIVE_MAX_POWER_W,
+    DEFAULT_EXTERNAL_CONTROL_EMA_ALPHA,
+    DEFAULT_EXTERNAL_CONTROL_HYSTERESIS_W,
+    DEFAULT_EXTERNAL_CONTROL_MAX_CHARGE_W,
+    DEFAULT_EXTERNAL_CONTROL_MAX_DISCHARGE_W,
+    DEFAULT_GRID_DEADBAND_W,
+    DEFAULT_GRID_TARGET_W,
     DEFAULT_IDLE_HYSTERESIS_W,
     DEFAULT_IDLE_MAX_POWER_W,
     DEFAULT_INV1_MAX_POWER_W,
@@ -62,6 +74,7 @@ from .const import (
     CONF_SOURCE_INV1_POWER_ENTITY,
     CONF_SOURCE_SOC1_ENTITY,
     INVERTER_TYPE_BI,
+    OPERATING_MODE_EXTERNAL_GRID_CONTROL,
     OPERATING_MODE_NORMAL,
     REG_BATTERY_WORK_CAPACITY,
     REG_BATTERY_MGMT_MODE,
@@ -242,8 +255,15 @@ class KostalData:
     idle_max_power_w: float = DEFAULT_IDLE_MAX_POWER_W
     idle_hysteresis_w: float = DEFAULT_IDLE_HYSTERESIS_W
     inv1_max_power_w: float = DEFAULT_INV1_MAX_POWER_W
+    grid_target_w: float = DEFAULT_GRID_TARGET_W
+    grid_deadband_w: float = DEFAULT_GRID_DEADBAND_W
+    external_control_max_discharge_w: float = DEFAULT_EXTERNAL_CONTROL_MAX_DISCHARGE_W
+    external_control_max_charge_w: float = DEFAULT_EXTERNAL_CONTROL_MAX_CHARGE_W
+    external_control_hysteresis_w: float = DEFAULT_EXTERNAL_CONTROL_HYSTERESIS_W
+    external_control_ema_alpha: float = DEFAULT_EXTERNAL_CONTROL_EMA_ALPHA
     last_inverter_control_setpoint_w: float | None = None
     last_inverter_control_mode: str | None = None
+    last_inverter_control_filtered_grid_w: float | None = None
     inverter_control_status: str = "Inactive"
     inverter_control_target_w: float | None = None
     inverter_control_target_pct: float | None = None
@@ -390,6 +410,16 @@ def _apply_inverter_control_options(options: dict, data: KostalData) -> None:
     data.idle_max_power_w = float(options.get(CONF_IDLE_MAX_POWER_W, DEFAULT_IDLE_MAX_POWER_W))
     data.idle_hysteresis_w = float(options.get(CONF_IDLE_HYSTERESIS_W, DEFAULT_IDLE_HYSTERESIS_W))
     data.inv1_max_power_w = float(options.get(CONF_INV1_MAX_POWER_W, DEFAULT_INV1_MAX_POWER_W))
+    data.grid_target_w = float(options.get(CONF_GRID_TARGET_W, DEFAULT_GRID_TARGET_W))
+    data.grid_deadband_w = float(options.get(CONF_GRID_DEADBAND_W, DEFAULT_GRID_DEADBAND_W))
+    data.external_control_max_discharge_w = float(options.get(CONF_EXTERNAL_CONTROL_MAX_DISCHARGE_W, DEFAULT_EXTERNAL_CONTROL_MAX_DISCHARGE_W))
+    data.external_control_max_charge_w = float(options.get(CONF_EXTERNAL_CONTROL_MAX_CHARGE_W, DEFAULT_EXTERNAL_CONTROL_MAX_CHARGE_W))
+    data.external_control_hysteresis_w = float(options.get(CONF_EXTERNAL_CONTROL_HYSTERESIS_W, DEFAULT_EXTERNAL_CONTROL_HYSTERESIS_W))
+    ema_alpha = float(options.get(CONF_EXTERNAL_CONTROL_EMA_ALPHA, DEFAULT_EXTERNAL_CONTROL_EMA_ALPHA))
+    data.external_control_ema_alpha = min(1.0, max(0.0, ema_alpha))
+
+    if data.operating_mode != OPERATING_MODE_EXTERNAL_GRID_CONTROL:
+        data.last_inverter_control_filtered_grid_w = None
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""

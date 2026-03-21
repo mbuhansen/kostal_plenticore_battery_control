@@ -10,7 +10,7 @@
                     "operating_mode": "Operating Mode",
                     "inverter_type": "Inverter Type"
                 },
-                "description": "Enter connection details for your Kostal Inverter.\n\n**IMPORTANT:** Remember to change **Battery Management** to **\"External via protocol (Modbus TCP)\"** in the battery settings on the Inverter Web UI. (This requires installer code access).\n\n**Unit ID** should be **71** for battery management registers on Plenticore inverters."
+                "description": "Enter connection details for your Kostal Inverter.\n\nChoose **Normal (with KSEM)** for standalone control with the local Kostal Smart Energy Meter. Choose **HA Inverter Grid Control (2 inverter)** when this inverter should follow another inverter via Home Assistant entities. Choose **Single Inverter Grid Control** when one inverter should trim grid import/export from one external grid-power entity.\n\n**IMPORTANT:** Remember to change **Battery Management** to **\"External via protocol (Modbus TCP)\"** in the battery settings on the Inverter Web UI. (This requires installer code access).\n\n**Unit ID** should be **71** for battery management registers on Plenticore inverters."
             },
             "ksem": {
                 "title": "KOSTAL Smart Energy Meter (KSEM) Detected",
@@ -23,7 +23,8 @@
         "error": {
             "cannot_connect": "Unable to connect to the inverter. Check IP address, port, and Unit ID.",
             "cannot_connect_ksem": "Unable to connect to the KSEM. Check the IP address or leave the field empty to skip.",
-            "missing_ha_control_fields": "Fill in all HA Inverter Control entity fields before saving."
+            "missing_ha_control_fields": "Fill in all HA Inverter Control entity fields before saving.",
+            "missing_external_control_fields": "Fill in the external grid power entity before saving."
         },
         "abort": {
             "already_configured": "Device is already configured"
@@ -31,7 +32,8 @@
     },
     "options": {
         "error": {
-            "missing_ha_control_fields": "Fill in all HA Inverter Control entity fields before saving."
+            "missing_ha_control_fields": "Fill in all HA Inverter Control entity fields before saving.",
+            "missing_external_control_fields": "Fill in the external grid power entity before saving."
         },
         "step": {
             "init": {
@@ -46,6 +48,12 @@
                     "source_soc1_entity": "Source SOC1 entity",
                     "source_inv1_power_entity": "Source inverter 1 power entity",
                     "source_grid_power_entity": "Source grid power entity",
+                    "grid_target_w": "Grid target (W)",
+                    "grid_deadband_w": "Grid deadband (W)",
+                    "external_control_max_discharge_w": "External control max discharge power (W)",
+                    "external_control_max_charge_w": "External control max charge power (W)",
+                    "external_control_hysteresis_w": "External control hysteresis (W)",
+                    "external_control_ema_alpha": "External control EMA alpha",
                     "inv2_min_soc": "Inverter 2 minimum SOC (%)",
                     "inv1_soc_buffer": "Inverter 1 SOC buffer (%)",
                     "inv1_max_power_w": "Inverter 1 max power (W)",
@@ -54,7 +62,7 @@
                     "idle_max_power_w": "Idle assist max power (W)",
                     "idle_hysteresis_w": "Idle assist hysteresis (W)"
                 },
-                "description": "SOC values are written directly to the inverter via Modbus. In HA Inverter Control mode, configure the master switch entities, external source entities, and the assist tuning values here. Leave SOC limits blank to leave the inverter setting unchanged."
+                "description": "SOC values are written directly to the inverter via Modbus. In Normal (with KSEM) mode, only the local inverter settings are used here. In HA Inverter Grid Control (2 inverter) mode, configure the master switch entities, external source entities, and the assist tuning values here. In Single Inverter Grid Control mode, configure the external grid-power entity and the grid-trim tuning values here. Leave SOC limits blank to leave the inverter setting unchanged."
             }
         }
     }

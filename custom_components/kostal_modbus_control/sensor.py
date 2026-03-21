@@ -30,6 +30,7 @@ from .const import (
     DOMAIN,
     INVERTER_TYPE_BI,
     INVERTER_TYPE_HYBRID,
+    OPERATING_MODE_EXTERNAL_GRID_CONTROL,
     OPERATING_MODE_HA_INVERTER_CONTROL,
     REG_INVERTER_STATE,
     REG_TOTAL_ACTIVE_POWER,
@@ -178,7 +179,7 @@ async def async_setup_entry(
     else:
         entities.append(KostalBatteryChargeCurrentSetpointSensor(coordinator, entry.entry_id))
 
-    if entry.data.get(CONF_OPERATING_MODE) == OPERATING_MODE_HA_INVERTER_CONTROL:
+    if entry.data.get(CONF_OPERATING_MODE) in {OPERATING_MODE_HA_INVERTER_CONTROL, OPERATING_MODE_EXTERNAL_GRID_CONTROL}:
         entities.extend([
             KostalInverterControlStatusSensor(data, entry.entry_id),
             KostalInverterControlTargetPowerSensor(data, entry.entry_id),
@@ -534,7 +535,6 @@ class KostalInverterControlBaseSensor(SensorEntity):
         self.async_write_ha_state()
 
 
-<<<<<<< HEAD
 class KostalPredbatModeSensor(SensorEntity):
     """Sensor showing whether Predbat is installed and in an active control mode."""
 
@@ -549,28 +549,11 @@ class KostalPredbatModeSensor(SensorEntity):
         self._entry_id = entry_id
         self._attr_unique_id = f"{entry_id}_{SENSOR_PREDBAT_MODE}"
         self._attr_name = "Predbat Mode"
-=======
-    def _handle_status_update(self, status: str) -> None:
-        self.async_write_ha_state()
-
-
-class KostalInverterControlBaseSensor(SensorEntity):
-    _attr_has_entity_name = True
-    _attr_should_poll = False
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-
-    def __init__(self, data, entry_id: str, key: str, name: str) -> None:
-        self._data = data
-        self._entry_id = entry_id
-        self._attr_unique_id = f"{entry_id}_{key}"
-        self._attr_name = name
->>>>>>> 0c81014 (Add HA inverter control mode)
 
     @property
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(identifiers={(DOMAIN, self._entry_id)})
 
-<<<<<<< HEAD
     @property
     def native_value(self) -> str:
         state = self.hass.states.get(PREDBAT_MODE_ENTITY)
@@ -586,20 +569,40 @@ class KostalInverterControlBaseSensor(SensorEntity):
                 self.hass,
                 [PREDBAT_MODE_ENTITY],
                 self._handle_predbat_mode_change,
-=======
+            )
+        )
+
+    @callback
+    def _handle_predbat_mode_change(self, event) -> None:
+        self.async_write_ha_state()
+
+
+class KostalInverterControlBaseSensor(SensorEntity):
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, data, entry_id: str, key: str, name: str) -> None:
+        self._data = data
+        self._entry_id = entry_id
+        self._attr_unique_id = f"{entry_id}_{key}"
+        self._attr_name = name
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(identifiers={(DOMAIN, self._entry_id)})
+
     async def async_added_to_hass(self) -> None:
         self.async_on_remove(
             async_dispatcher_connect(
                 self.hass,
                 f"{SIGNAL_INVERTER_CONTROL_UPDATED}_{self._entry_id}",
                 self._handle_control_update,
->>>>>>> 0c81014 (Add HA inverter control mode)
             )
         )
 
     @callback
-<<<<<<< HEAD
-    def _handle_predbat_mode_change(self, event) -> None:
+    def _handle_control_update(self) -> None:
         self.async_write_ha_state()
 
 
@@ -632,14 +635,11 @@ class KostalInverterStateTextSensor(KostalBaseSensor):
         if val is None:
             return None
         return INVERTER_STATE_MAP.get(val, f"Unknown ({val})")
-=======
-    def _handle_control_update(self) -> None:
-        self.async_write_ha_state()
 
 
 class KostalInverterControlStatusSensor(KostalInverterControlBaseSensor):
     _attr_device_class = SensorDeviceClass.ENUM
-    _attr_options = ["Inactive", "Unavailable", "Block Charge", "Block Discharge", "Charge", "Discharge", "Idle Assist"]
+    _attr_options = ["Inactive", "Unavailable", "Block Charge", "Block Discharge", "Charge", "Discharge", "Idle Assist", "Grid Support", "Grid Idle"]
 
     def __init__(self, data, entry_id: str) -> None:
         super().__init__(data, entry_id, SENSOR_INVERTER_CONTROL_STATUS, "Inverter Control Status")
@@ -680,12 +680,12 @@ class KostalInverterControlHouseLoadSensor(KostalInverterControlBaseSensor):
     _attr_state_class = SensorStateClass.MEASUREMENT
 
     def __init__(self, data, entry_id: str) -> None:
-        super().__init__(data, entry_id, SENSOR_INVERTER_CONTROL_HOUSE_LOAD, "Inverter Control House Load")
+        name = "Inverter Control Filtered Grid Power" if data.operating_mode == OPERATING_MODE_EXTERNAL_GRID_CONTROL else "Inverter Control House Load"
+        super().__init__(data, entry_id, SENSOR_INVERTER_CONTROL_HOUSE_LOAD, name)
 
     @property
     def native_value(self) -> float | None:
         return self._data.inverter_control_house_load_w
->>>>>>> 0c81014 (Add HA inverter control mode)
 
 
 class KostalBatteryWorkCapacitySensor(KostalBaseSensor):

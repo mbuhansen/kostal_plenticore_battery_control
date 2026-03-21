@@ -25,6 +25,12 @@ from homeassistant.helpers.selector import (
 from .const import (
     CONF_ACTIVE_HYSTERESIS_W,
     CONF_ACTIVE_MAX_POWER_W,
+    CONF_EXTERNAL_CONTROL_EMA_ALPHA,
+    CONF_EXTERNAL_CONTROL_HYSTERESIS_W,
+    CONF_EXTERNAL_CONTROL_MAX_CHARGE_W,
+    CONF_EXTERNAL_CONTROL_MAX_DISCHARGE_W,
+    CONF_GRID_DEADBAND_W,
+    CONF_GRID_TARGET_W,
     CONF_IDLE_HYSTERESIS_W,
     CONF_IDLE_MAX_POWER_W,
     CONF_INV1_MAX_POWER_W,
@@ -45,6 +51,12 @@ from .const import (
     CONF_SOURCE_SOC1_ENTITY,
     DEFAULT_ACTIVE_HYSTERESIS_W,
     DEFAULT_ACTIVE_MAX_POWER_W,
+    DEFAULT_EXTERNAL_CONTROL_EMA_ALPHA,
+    DEFAULT_EXTERNAL_CONTROL_HYSTERESIS_W,
+    DEFAULT_EXTERNAL_CONTROL_MAX_CHARGE_W,
+    DEFAULT_EXTERNAL_CONTROL_MAX_DISCHARGE_W,
+    DEFAULT_GRID_DEADBAND_W,
+    DEFAULT_GRID_TARGET_W,
     DEFAULT_IDLE_HYSTERESIS_W,
     DEFAULT_IDLE_MAX_POWER_W,
     DEFAULT_INV1_MAX_POWER_W,
@@ -58,6 +70,7 @@ from .const import (
     INVERTER_TYPE_HYBRID,
     KSEM_PORT,
     KSEM_SLAVE_ID,
+    OPERATING_MODE_EXTERNAL_GRID_CONTROL,
     OPERATING_MODE_HA_INVERTER_CONTROL,
     OPERATING_MODE_NORMAL,
 )
@@ -81,16 +94,21 @@ def _entity_selector(domains: list[str]):
     return EntitySelector(EntitySelectorConfig(domain=domains))
 
 
-def _number_selector(min_value: float, max_value: float, step: float, unit: str):
-    return NumberSelector(
-        NumberSelectorConfig(
-            min=min_value,
-            max=max_value,
-            step=step,
-            mode=NumberSelectorMode.BOX,
-            unit_of_measurement=unit,
-        )
-    )
+def _number_selector(
+    min_value: float,
+    max_value: float,
+    step: float,
+    unit: str | None = None,
+):
+    config_kwargs: dict[str, Any] = {
+        "min": min_value,
+        "max": max_value,
+        "step": step,
+        "mode": NumberSelectorMode.BOX,
+    }
+    if unit is not None:
+        config_kwargs["unit_of_measurement"] = unit
+    return NumberSelector(NumberSelectorConfig(**config_kwargs))
 
 
 def _add_option_field(schema: dict, key: str, selector, default: Any | None = None) -> None:
@@ -156,8 +174,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_OPERATING_MODE, default=OPERATING_MODE_NORMAL): SelectSelector(
                     SelectSelectorConfig(
                         options=[
-                            {"value": OPERATING_MODE_NORMAL, "label": "Normal"},
-                            {"value": OPERATING_MODE_HA_INVERTER_CONTROL, "label": "HA Inverter Control"},
+                            {"value": OPERATING_MODE_NORMAL, "label": "Normal (with KSEM)"},
+                            {"value": OPERATING_MODE_HA_INVERTER_CONTROL, "label": "HA Inverter Grid Control (2 inverter)"},
+                            {"value": OPERATING_MODE_EXTERNAL_GRID_CONTROL, "label": "Single Inverter Grid Control"},
                         ],
                         mode=SelectSelectorMode.LIST,
                     )
@@ -248,6 +267,13 @@ class KostalOptionsFlowHandler(config_entries.OptionsFlow):
                         data_schema=vol.Schema(self._build_schema()),
                         errors={"base": "missing_ha_control_fields"},
                     )
+            if operating_mode == OPERATING_MODE_EXTERNAL_GRID_CONTROL:
+                if not user_input.get(CONF_SOURCE_GRID_POWER_ENTITY):
+                    return self.async_show_form(
+                        step_id="init",
+                        data_schema=vol.Schema(self._build_schema()),
+                        errors={"base": "missing_external_control_fields"},
+                    )
             return self.async_create_entry(title="", data=user_input)
 
         schema = vol.Schema(self._build_schema())
@@ -268,11 +294,22 @@ class KostalOptionsFlowHandler(config_entries.OptionsFlow):
             ): _soc_selector(),
         }
 
-        if operating_mode != OPERATING_MODE_HA_INVERTER_CONTROL:
+        if operating_mode == OPERATING_MODE_NORMAL:
+            return schema
+
+        sensor_selector = _entity_selector(["sensor", "number", "input_number"])
+
+        if operating_mode == OPERATING_MODE_EXTERNAL_GRID_CONTROL:
+            _add_option_field(schema, CONF_SOURCE_GRID_POWER_ENTITY, sensor_selector, current.get(CONF_SOURCE_GRID_POWER_ENTITY))
+            _add_option_field(schema, CONF_GRID_TARGET_W, _number_selector(-20000.0, 20000.0, 50.0, "W"), current.get(CONF_GRID_TARGET_W, DEFAULT_GRID_TARGET_W))
+            _add_option_field(schema, CONF_GRID_DEADBAND_W, _number_selector(0.0, 5000.0, 10.0, "W"), current.get(CONF_GRID_DEADBAND_W, DEFAULT_GRID_DEADBAND_W))
+            _add_option_field(schema, CONF_EXTERNAL_CONTROL_MAX_DISCHARGE_W, _number_selector(0.0, 50000.0, 100.0, "W"), current.get(CONF_EXTERNAL_CONTROL_MAX_DISCHARGE_W, DEFAULT_EXTERNAL_CONTROL_MAX_DISCHARGE_W))
+            _add_option_field(schema, CONF_EXTERNAL_CONTROL_MAX_CHARGE_W, _number_selector(0.0, 50000.0, 100.0, "W"), current.get(CONF_EXTERNAL_CONTROL_MAX_CHARGE_W, DEFAULT_EXTERNAL_CONTROL_MAX_CHARGE_W))
+            _add_option_field(schema, CONF_EXTERNAL_CONTROL_HYSTERESIS_W, _number_selector(0.0, 5000.0, 10.0, "W"), current.get(CONF_EXTERNAL_CONTROL_HYSTERESIS_W, DEFAULT_EXTERNAL_CONTROL_HYSTERESIS_W))
+            _add_option_field(schema, CONF_EXTERNAL_CONTROL_EMA_ALPHA, _number_selector(0.0, 1.0, 0.05), current.get(CONF_EXTERNAL_CONTROL_EMA_ALPHA, DEFAULT_EXTERNAL_CONTROL_EMA_ALPHA))
             return schema
 
         switch_selector = _entity_selector(["switch", "input_boolean"])
-        sensor_selector = _entity_selector(["sensor", "number", "input_number"])
 
         _add_option_field(schema, CONF_MASTER_CHARGE_START_ENTITY, switch_selector, current.get(CONF_MASTER_CHARGE_START_ENTITY))
         _add_option_field(schema, CONF_MASTER_DISCHARGE_START_ENTITY, switch_selector, current.get(CONF_MASTER_DISCHARGE_START_ENTITY))

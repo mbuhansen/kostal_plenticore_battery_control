@@ -19,6 +19,7 @@ from .const import (
     CONF_OPERATING_MODE,
     DOMAIN,
     LOOP_INTERVAL,
+    OPERATING_MODE_EXTERNAL_GRID_CONTROL,
     OPERATING_MODE_HA_INVERTER_CONTROL,
     PREDBAT_CHARGE_START_DELTA,
     PREDBAT_HOLD_DELTA,
@@ -101,7 +102,7 @@ async def async_setup_entry(
         block_charge_switch,
     ]
     inverter_control_switch = None
-    if entry.data.get(CONF_OPERATING_MODE) == OPERATING_MODE_HA_INVERTER_CONTROL:
+    if entry.data.get(CONF_OPERATING_MODE) in {OPERATING_MODE_HA_INVERTER_CONTROL, OPERATING_MODE_EXTERNAL_GRID_CONTROL}:
         inverter_control_switch = KostalInverterControlSwitch(data, entry.entry_id)
         exclusive_switches.append(inverter_control_switch)
     for switch in exclusive_switches:
@@ -1098,6 +1099,9 @@ class KostalInverterControlSwitch(KostalBaseSwitch):
     _name = "Inverter Control"
     _auto_resume_on_recovery = True
 
+    def _operating_mode(self) -> str:
+        return self._data.operating_mode
+
     def _publish_state(
         self,
         status: str,
@@ -1113,6 +1117,9 @@ class KostalInverterControlSwitch(KostalBaseSwitch):
         async_dispatcher_send(self.hass, f"{SIGNAL_INVERTER_CONTROL_UPDATED}_{self._entry_id}")
 
     def _control_inputs(self) -> dict[str, float] | None:
+        if self._operating_mode() == OPERATING_MODE_EXTERNAL_GRID_CONTROL:
+            return self._external_grid_inputs()
+
         coordinator = self._data.coordinator
         if coordinator is None or coordinator.data is None:
             _LOGGER.debug("Inverter Control: no coordinator data available")
@@ -1145,6 +1152,37 @@ class KostalInverterControlSwitch(KostalBaseSwitch):
             "house_load": float(house_load),
         }
 
+    def _external_grid_inputs(self) -> dict[str, float] | None:
+        coordinator = self._data.coordinator
+        if coordinator is None or coordinator.data is None:
+            _LOGGER.debug("External Grid Control: no coordinator data available")
+            return None
+
+        soc = coordinator.data.get(REG_BATTERY_SOC)
+        battery_power = coordinator.data.get(REG_BATTERY_POWER)
+        raw_grid_power = self._get_float_state(self._data.source_grid_power_entity)
+
+        if None in (soc, battery_power, raw_grid_power):
+            _LOGGER.debug(
+                "External Grid Control: insufficient control data soc=%s battery_power=%s grid_power=%s",
+                soc,
+                battery_power,
+                raw_grid_power,
+            )
+            return None
+
+        alpha = self._data.external_control_ema_alpha
+        previous_filtered = self._data.last_inverter_control_filtered_grid_w
+        filtered_grid_power = raw_grid_power if previous_filtered is None else alpha * raw_grid_power + (1 - alpha) * previous_filtered
+        self._data.last_inverter_control_filtered_grid_w = filtered_grid_power
+
+        return {
+            "soc": float(soc),
+            "battery_power": float(battery_power),
+            "raw_grid_power": float(raw_grid_power),
+            "filtered_grid_power": float(filtered_grid_power),
+        }
+
     def _get_float_state(self, entity_id: str | None) -> float | None:
         if not entity_id:
             return None
@@ -1165,6 +1203,9 @@ class KostalInverterControlSwitch(KostalBaseSwitch):
         return state.state == "on"
 
     def _master_mode(self) -> str | None:
+        if self._operating_mode() == OPERATING_MODE_EXTERNAL_GRID_CONTROL:
+            return "grid_support"
+
         states = {
             "block_charge": self._get_bool_state(self._data.master_block_charge_entity),
             "block_discharge": self._get_bool_state(self._data.master_block_discharge_entity),
@@ -1249,6 +1290,25 @@ class KostalInverterControlSwitch(KostalBaseSwitch):
             return self._discharge_target_watts(self._data.active_max_power_w)
         return None
 
+    def _external_grid_target_watts(self, inputs: dict[str, float] | None) -> tuple[float | None, float | None, str]:
+        if inputs is None:
+            return None, None, "Unavailable"
+
+        filtered_grid_power = inputs["filtered_grid_power"]
+        grid_error = filtered_grid_power - self._data.grid_target_w
+
+        if abs(grid_error) <= self._data.grid_deadband_w:
+            return 0.0, filtered_grid_power, "Grid Idle"
+
+        if grid_error > 0.0:
+            discharge_cap = min(self._data.external_control_max_discharge_w, self._max_discharge_watts())
+            target_watts = min(grid_error, max(0.0, discharge_cap))
+            return max(0.0, target_watts), filtered_grid_power, "Grid Support"
+
+        charge_cap = min(self._data.external_control_max_charge_w, self._max_charge_watts())
+        target_watts = min(abs(grid_error), max(0.0, charge_cap))
+        return -max(0.0, target_watts), filtered_grid_power, "Grid Support"
+
     def _smoothed_target_watts(self, proposed_watts: float, hysteresis_w: float, mode: str) -> float:
         last_mode = self._data.last_inverter_control_mode
         last_target = self._data.last_inverter_control_setpoint_w
@@ -1272,6 +1332,40 @@ class KostalInverterControlSwitch(KostalBaseSwitch):
         return 0.0
 
     async def _loop_action(self, *args):
+        if self._operating_mode() == OPERATING_MODE_EXTERNAL_GRID_CONTROL:
+            inputs = self._control_inputs()
+            raw_grid_power = inputs["raw_grid_power"] if inputs is not None else None
+            proposed_watts, filtered_grid_power, status = self._external_grid_target_watts(inputs)
+            if proposed_watts is None:
+                self._publish_state("Unavailable")
+                await self._data.handler.write_float(self._data.charge_discharge_reg, 0.0)
+                return
+
+            target_watts = self._smoothed_target_watts(
+                proposed_watts,
+                self._data.external_control_hysteresis_w,
+                "grid_support",
+            )
+            target_pct = self._pct_from_target_watts(target_watts)
+            self._publish_state(
+                status,
+                target_watts=target_watts,
+                target_pct=target_pct,
+                house_load=filtered_grid_power,
+            )
+            _LOGGER.debug(
+                "External Grid Control: raw_grid=%sW filtered_grid=%.1fW grid_target=%.1fW proposed_watts=%.1fW target_watts=%.1fW target_pct=%s%% status=%s",
+                "None" if raw_grid_power is None else f"{raw_grid_power:.1f}",
+                filtered_grid_power,
+                self._data.grid_target_w,
+                proposed_watts,
+                target_watts,
+                target_pct,
+                status,
+            )
+            await self._data.handler.write_float(self._data.charge_discharge_reg, target_pct)
+            return
+
         mode = self._master_mode()
         if mode is None:
             self._publish_state("Unavailable")
@@ -1328,6 +1422,7 @@ class KostalInverterControlSwitch(KostalBaseSwitch):
         await self._data.handler.write_float(self._data.charge_discharge_reg, 0.0)
         self._data.last_inverter_control_mode = None
         self._data.last_inverter_control_setpoint_w = None
+        self._data.last_inverter_control_filtered_grid_w = None
         self._publish_state("Inactive")
         await self._data.handler.close()
 
