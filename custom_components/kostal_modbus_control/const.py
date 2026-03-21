@@ -34,7 +34,6 @@ REG_IO_OUTPUT_3 = 610             # I/O-Board Switched Output 3 - U16 (0x262) RW
 REG_IO_OUTPUT_4 = 611             # I/O-Board Switched Output 4 - U16 (0x263) RW
 
 # Read-Only Registers (Battery Data)
-REG_TOTAL_HOME_CONSUMPTION = 118    # Total home consumption (Wh) - Float (0x76)
 REG_BATTERY_SOC = 210             # Act. state of charge (%) - Float (0xD2)
 REG_BATTERY_TEMP = 214            # Battery Temperature (°C) - Float (0xD6)
 REG_BATTERY_VOLTAGE = 216         # Battery Voltage (V) - Float (0xD8)
@@ -48,7 +47,7 @@ REG_BATTERY_FIRMWARE = 586        # Battery Firmware - U32 (0x24A)
 REG_BATTERY_TYPE = 588            # Battery type - U16 (0x24C)
 
 # Read-Only Registers (Grid/Powermeter)
-REG_TOTAL_ACTIVE_POWER = 252      # Total active power (powermeter) (W) - Float (0xFC)
+REG_TOTAL_ACTIVE_POWER = 252      # Grid power (powermeter) (W) - Float (0xFC)
 REG_CURRENT_PHASE1 = 222          # Current phase 1 powermeter (A) - Float (0xDE)
 REG_CURRENT_PHASE2 = 232          # Current phase 2 powermeter (A) - Float (0xE8)
 REG_CURRENT_PHASE3 = 242          # Current phase 3 powermeter (A) - Float (0xF2)
@@ -83,7 +82,6 @@ BATTERY_TYPE_MAP = {
 }
 
 # Entity descriptions (Sensors)
-SENSOR_TOTAL_HOME_CONSUMPTION = "total_home_consumption"
 SENSOR_BATTERY_SOC = "battery_soc"
 SENSOR_BATTERY_POWER = "battery_power"
 SENSOR_BATTERY_VOLTAGE = "battery_voltage"

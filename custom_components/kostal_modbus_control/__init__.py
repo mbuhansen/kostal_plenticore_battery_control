@@ -21,7 +21,6 @@ from .const import (
     LOOP_INTERVAL,
     REG_MODEL,
     REG_POWER_CLASS,
-    REG_TOTAL_HOME_CONSUMPTION,
     REG_TOTAL_ACTIVE_POWER,
     REG_BATTERY_SOC,
     REG_BATTERY_POWER,
@@ -78,7 +77,6 @@ class KostalCoordinator(DataUpdateCoordinator):
             data: dict = {}
             # Float registers (2 registers each)
             for address in (
-                REG_TOTAL_HOME_CONSUMPTION,
                 REG_TOTAL_ACTIVE_POWER,
                 REG_BATTERY_SOC,
                 REG_BATTERY_VOLTAGE,

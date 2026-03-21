@@ -28,7 +28,6 @@ from .const import (
     DOMAIN,
     INVERTER_TYPE_BI,
     INVERTER_TYPE_HYBRID,
-    REG_TOTAL_HOME_CONSUMPTION,
     REG_TOTAL_ACTIVE_POWER,
     REG_BATTERY_SOC,
     REG_BATTERY_POWER,
@@ -56,7 +55,6 @@ from .const import (
     REG_CURRENT_PHASE2,
     REG_CURRENT_PHASE3,
     REG_SENSOR_TYPE,
-    SENSOR_TOTAL_HOME_CONSUMPTION,
     SENSOR_TOTAL_ACTIVE_POWER,
     SENSOR_BATTERY_SOC,
     SENSOR_BATTERY_POWER,
@@ -104,7 +102,6 @@ async def async_setup_entry(
     inverter_type = entry.data.get(CONF_INVERTER_TYPE, INVERTER_TYPE_HYBRID)
 
     entities = [
-        KostalTotalHomeConsumptionSensor(coordinator, entry.entry_id),
         KostalTotalActivePowerSensor(coordinator, entry.entry_id),
         KostalBatterySoCSensor(coordinator, entry.entry_id),
         KostalBatteryPowerSensor(coordinator, entry.entry_id),
@@ -182,18 +179,9 @@ class KostalBatterySoCSensor(KostalBaseSensor):
     _attr_state_class = SensorStateClass.MEASUREMENT
 
 
-class KostalTotalHomeConsumptionSensor(KostalBaseSensor):
-    _key = SENSOR_TOTAL_HOME_CONSUMPTION
-    _name = "Total Home Consumption"
-    _address = REG_TOTAL_HOME_CONSUMPTION
-    _attr_device_class = SensorDeviceClass.ENERGY
-    _attr_native_unit_of_measurement = UnitOfEnergy.WATT_HOUR
-    _attr_state_class = SensorStateClass.TOTAL_INCREASING
-
-
 class KostalTotalActivePowerSensor(KostalBaseSensor):
     _key = SENSOR_TOTAL_ACTIVE_POWER
-    _name = "Total Active Power"
+    _name = "Grid Power"
     _address = REG_TOTAL_ACTIVE_POWER
     _attr_device_class = SensorDeviceClass.POWER
     _attr_native_unit_of_measurement = UnitOfPower.WATT
