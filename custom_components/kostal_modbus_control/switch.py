@@ -48,6 +48,7 @@ from .const import (
     EMS_SAFETY_MARGIN,
     EMS_PHASE_VOLTAGE,
     SIGNAL_EMS_STATUS_UPDATED,
+    SIGNAL_PREDBAT_STATUS_UPDATED,
 )
 from .modbus_handler import KostalModbusHandler
 
@@ -434,11 +435,21 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         self._predbat_startup_block_until: float | None = None
         self._predbat_discharge_blocked: bool = False
 
+    def _set_predbat_status(self, status: str) -> None:
+        if self._data.predbat_status == status:
+            return
+        self._data.predbat_status = status
+        async_dispatcher_send(
+            self.hass, f"{SIGNAL_PREDBAT_STATUS_UPDATED}_{self._entry_id}", status
+        )
+
     async def async_turn_on(self, **kwargs: Any) -> None:
         if self._predbat_switch is not None and self._predbat_switch.is_on:
             self._predbat_startup_block_until = time.time() + 15.0
+            self._set_predbat_status("Waiting")
         else:
             self._predbat_startup_block_until = None
+            self._set_predbat_status("Inactive")
         await super().async_turn_on(**kwargs)
 
     def _predbat_startup_write_blocked(self) -> bool:
@@ -461,6 +472,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         if self._predbat_switch is not None and self._predbat_switch.is_on:
             await asyncio.sleep(15.0)
             if not self._attr_is_on:
+                self._set_predbat_status("Inactive")
                 return
 
             state = self.hass.states.get("binary_sensor.predbat_charging")
@@ -470,10 +482,12 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                 _LOGGER.info("Predbat Control: startup decision = charge")
                 self._predbat_was_charging = True
                 self._predbat_transition_time = None
+                self._set_predbat_status("Charge")
             else:
                 _LOGGER.info("Predbat Control: startup decision = hold")
                 self._predbat_was_charging = False
                 self._predbat_transition_time = time.time()
+                self._set_predbat_status("Hold")
 
             if not await self._run_guarded_action(self._loop_action, "initial predbat loop"):
                 return
@@ -485,10 +499,12 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
 
     async def _loop_action(self, *args):
         if not self._attr_is_on:
+            self._set_predbat_status("Inactive")
             return
         if self._predbat_switch is not None and self._predbat_switch.is_on:
             await self._predbat_loop_action()
         else:
+            self._set_predbat_status("Inactive")
             # Normal charge — no Predbat Control
             target_pct = self._data.charge_rate
             if self._data.ems_status != "Inactive":
@@ -499,11 +515,13 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         """Predbat-aware loop: charge when predbat_charging is ON, hold SOC floor when OFF."""
         if not self._attr_is_on:
             _LOGGER.debug("Predbat Control: Charge Start er OFF — ignorerer predbat_charging")
+            self._set_predbat_status("Inactive")
             return
         state = self.hass.states.get("binary_sensor.predbat_charging")
         is_charging = state is not None and state.state == "on"
 
         if is_charging:
+            self._set_predbat_status("Charge")
             if self._predbat_was_charging is not True:
                 _LOGGER.info("Predbat Control: predbat_charging ON — charging")
                 self._predbat_transition_time = None
@@ -529,6 +547,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         if self._predbat_was_charging is True:
             # Transition: charging just stopped — write calculated stop setpoint and start 45s wait
             _LOGGER.info("Predbat Control: predbat_charging OFF — waiting 45s before SOC check")
+            self._set_predbat_status("Waiting")
             stop_pct = self._stop_discharge_pct_from_active_power()
             await self._data.handler.write_float(self._data.charge_discharge_reg, stop_pct)
             self._predbat_transition_time = time.time()
@@ -538,6 +557,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         # Check 45s wait after charge stopped
         elapsed = time.time() - (self._predbat_transition_time or 0.0)
         if elapsed < 45:
+            self._set_predbat_status("Waiting")
             _LOGGER.debug("Predbat Control: %.0fs remaining before SOC check", 45 - elapsed)
             return
 
@@ -568,6 +588,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
 
         floor = best_limit + 1.0
         if soc <= floor:
+            self._set_predbat_status("Hold")
             # At/below floor — block discharge
             if not self._predbat_discharge_blocked:
                 _LOGGER.info(
@@ -577,6 +598,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                 self._predbat_discharge_blocked = True
             await self._data.handler.write_float(REG_DISCHARGE_RATE, 0.0)
         else:
+            self._set_predbat_status("Hold")
             # Above floor — restore free discharge if 1040 was previously forced to zero.
             discharge_limit_is_blocked = self._current_discharge_limit_watts() <= 0.0
             if self._predbat_discharge_blocked or discharge_limit_is_blocked:
@@ -596,6 +618,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
             stop_pct = self._stop_discharge_pct_from_active_power()
             await self._data.handler.write_float(self._data.charge_discharge_reg, stop_pct)
         self._data.last_stop_time = time.time()
+        self._set_predbat_status("Inactive")
         if self._predbat_discharge_blocked:
             self._predbat_discharge_blocked = False
             await self._restore_max_discharge_limit()
@@ -605,6 +628,9 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         # Close the Modbus connection so the inverter sees a clean disconnect.
         # It will reconnect automatically on the next read/write.
         await self._data.handler.close()
+
+    def _on_communication_fault(self) -> None:
+        self._set_predbat_status("Inactive")
 
 class KostalDischargeStartSwitch(KostalBaseSwitch):
     _key = SWITCH_DISCHARGE_START

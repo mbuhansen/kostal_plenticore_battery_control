@@ -139,6 +139,7 @@ class KostalData:
     inverter_timeout: int = DEFAULT_MODBUS_TIMEOUT
     ems_status: str = "Inactive"
     ems_charge_limit_pct: float = 100.0
+    predbat_status: str = "Inactive"
     inverter_model: str = ""
     inverter_power_class: str = ""
     charge_discharge_reg: int = REG_CHARGE_DISCHARGE_LIMIT

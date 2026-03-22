@@ -68,6 +68,7 @@ from .const import (
     SENSOR_SENSOR_TYPE,
     SENSOR_EMS_STATUS,
     SENSOR_EMS_CHARGE_LIMIT,
+    SENSOR_PREDBAT_STATUS,
     SENSOR_BATTERY_CHARGE_CURRENT_SETPOINT,
     SENSOR_BATTERY_CHARGE_POWER_SETPOINT,
     SENSOR_BATTERY_MAX_CHARGE_POWER_LIMIT,
@@ -87,6 +88,7 @@ from .const import (
     BATTERY_TYPE_MAP,
     SENSOR_TYPE_MAP,
     SIGNAL_EMS_STATUS_UPDATED,
+    SIGNAL_PREDBAT_STATUS_UPDATED,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -115,6 +117,7 @@ async def async_setup_entry(
         KostalSensorTypeSensor(coordinator, entry.entry_id),
         KostalEMSStatusSensor(data, entry.entry_id),
         KostalEMSChargeLimitSensor(data, entry.entry_id),
+        KostalPredbatStatusSensor(data, entry.entry_id),
         # Diagnostic sensors (disabled by default)
         KostalBatteryWorkCapacitySensor(coordinator, entry.entry_id),
         KostalBatterySerialSensor(coordinator, entry.entry_id),
@@ -397,6 +400,43 @@ class KostalEMSChargeLimitSensor(SensorEntity):
             async_dispatcher_connect(
                 self.hass,
                 f"{SIGNAL_EMS_STATUS_UPDATED}_{self._entry_id}",
+                self._handle_status_update,
+            )
+        )
+
+    @callback
+    def _handle_status_update(self, status: str) -> None:
+        self.async_write_ha_state()
+
+
+class KostalPredbatStatusSensor(SensorEntity):
+    """Sensor showing the current Predbat decision while Charge Start is active."""
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = ["Inactive", "Waiting", "Charge", "Hold"]
+    _attr_icon = "mdi:home-battery"
+
+    def __init__(self, data, entry_id: str) -> None:
+        self._data = data
+        self._entry_id = entry_id
+        self._attr_unique_id = f"{entry_id}_{SENSOR_PREDBAT_STATUS}"
+        self._attr_name = "Predbat Status"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(identifiers={(DOMAIN, self._entry_id)})
+
+    @property
+    def native_value(self) -> str:
+        return self._data.predbat_status
+
+    async def async_added_to_hass(self) -> None:
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass,
+                f"{SIGNAL_PREDBAT_STATUS_UPDATED}_{self._entry_id}",
                 self._handle_status_update,
             )
         )
