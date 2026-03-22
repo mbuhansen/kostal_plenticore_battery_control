@@ -40,6 +40,7 @@ from .const import (
     SWITCH_DISCHARGE_START,
     SWITCH_EMS,
     SWITCH_PREDBAT_CONTROL,
+    SWITCH_AUTO_RESUME_ON_RECOVERY,
     SWITCH_IO_OUTPUT_1,
     SWITCH_IO_OUTPUT_2,
     SWITCH_IO_OUTPUT_3,
@@ -61,6 +62,7 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][entry.entry_id]
     
     predbat_switch = KostalPredbatControlSwitch(data, entry.entry_id)
+    auto_resume_switch = KostalAutoResumeRecoverySwitch(data, entry.entry_id)
     charge_start_switch = KostalChargeStartSwitch(data, entry.entry_id, predbat_switch)
     discharge_start_switch = KostalDischargeStartSwitch(data, entry.entry_id)
     block_discharge_switch = KostalBlockDischargeSwitch(data, entry.entry_id)
@@ -81,6 +83,7 @@ async def async_setup_entry(
         block_charge_switch,
         KostalEMSSwitch(data, entry.entry_id, charge_start_switch),
         predbat_switch,
+        auto_resume_switch,
         # I/O Board outputs (hidden by default)
         KostalIOOutputSwitch(data, entry.entry_id, SWITCH_IO_OUTPUT_1, "I/O Output 1", REG_IO_OUTPUT_1),
         KostalIOOutputSwitch(data, entry.entry_id, SWITCH_IO_OUTPUT_2, "I/O Output 2", REG_IO_OUTPUT_2),
@@ -133,7 +136,11 @@ class KostalBaseSwitch(SwitchEntity):
             "faulted": self._faulted,
             "resume_pending": self._resume_pending,
             "loop_running": self._remove_timer is not None,
+            "auto_resume_enabled": self._should_auto_resume_on_recovery(),
         }
+
+    def _should_auto_resume_on_recovery(self) -> bool:
+        return self._auto_resume_on_recovery and self._data.auto_resume_on_recovery
 
     def _cancel_loop_timer(self) -> None:
         if self._remove_timer:
@@ -175,7 +182,7 @@ class KostalBaseSwitch(SwitchEntity):
                 self.async_write_ha_state()
             return
 
-        if not self._auto_resume_on_recovery or not self._resume_pending or not self._attr_is_on:
+        if not self._should_auto_resume_on_recovery() or not self._resume_pending or not self._attr_is_on:
             return
 
         if self._remove_timer is not None:
@@ -218,7 +225,7 @@ class KostalBaseSwitch(SwitchEntity):
         await self._data.handler.close()
         self._on_communication_fault()
 
-        if self._auto_resume_on_recovery:
+        if self._should_auto_resume_on_recovery():
             self._data.last_stop_time = time.time()
             self._set_resume_pending(True)
             _LOGGER.warning(
@@ -235,6 +242,8 @@ class KostalBaseSwitch(SwitchEntity):
                 err,
             )
         else:
+            self._data.last_stop_time = time.time()
+            self._set_resume_pending(False)
             self._attr_is_on = False
             _LOGGER.warning(
                 "%s turned off after %s failure: %s",
@@ -781,6 +790,46 @@ class KostalPredbatControlSwitch(KostalBaseSwitch, RestoreEntity):
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         self._attr_is_on = False
+        self.async_write_ha_state()
+
+
+class KostalAutoResumeRecoverySwitch(SwitchEntity, RestoreEntity):
+    """Config switch to enable automatic resume for control switches after recovery."""
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_entity_category = EntityCategory.CONFIG
+    _key = SWITCH_AUTO_RESUME_ON_RECOVERY
+    _name = "Auto Resume On Recovery"
+
+    def __init__(self, data, entry_id: str) -> None:
+        self._data = data
+        self._entry_id = entry_id
+        self._attr_unique_id = f"{entry_id}_{self._key}"
+        self._attr_name = self._name
+        self._attr_is_on = bool(self._data.auto_resume_on_recovery)
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(identifiers={(DOMAIN, self._entry_id)})
+
+    async def async_added_to_hass(self) -> None:
+        last = await self.async_get_last_state()
+        if last is not None:
+            self._attr_is_on = last.state == "on"
+        self._data.auto_resume_on_recovery = self._attr_is_on
+        self.async_write_ha_state()
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        self._attr_is_on = True
+        self._data.auto_resume_on_recovery = True
+        _LOGGER.info("Automatic resume after recovery enabled for control switches")
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        self._attr_is_on = False
+        self._data.auto_resume_on_recovery = False
+        _LOGGER.info("Automatic resume after recovery disabled for control switches")
         self.async_write_ha_state()
 
 
