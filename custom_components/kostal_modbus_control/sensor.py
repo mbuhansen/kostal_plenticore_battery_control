@@ -40,7 +40,6 @@ from .const import (
     REG_CHARGE_RATE,
     REG_DISCHARGE_RATE,
     REG_BATTERY_WORK_CAPACITY,
-    REG_BATTERY_SERIAL,
     REG_BATTERY_MGMT_MODE,
     REG_BATTERY_TYPE,
     REG_BATTERY_CHARGE_CURRENT,
@@ -74,7 +73,6 @@ from .const import (
     SENSOR_BATTERY_MAX_CHARGE_POWER_LIMIT,
     SENSOR_BATTERY_MAX_DISCHARGE_POWER_LIMIT,
     SENSOR_BATTERY_WORK_CAPACITY,
-    SENSOR_BATTERY_SERIAL,
     SENSOR_BATTERY_MGMT_MODE,
     SENSOR_BATTERY_TYPE,
     SENSOR_BATTERY_FIRMWARE,
@@ -120,7 +118,6 @@ async def async_setup_entry(
         KostalPredbatStatusSensor(data, entry.entry_id),
         # Diagnostic sensors (disabled by default)
         KostalBatteryWorkCapacitySensor(coordinator, entry.entry_id),
-        KostalBatterySerialSensor(coordinator, entry.entry_id),
         KostalBatteryMgmtModeSensor(coordinator, entry.entry_id),
         # Diagnostic sensors (enabled by default)
         KostalBatteryTypeSensor(coordinator, entry.entry_id),
@@ -457,24 +454,6 @@ class KostalBatteryWorkCapacitySensor(KostalBaseSensor):
     _attr_entity_registry_enabled_default = False
 
 
-class KostalBatterySerialSensor(KostalBaseSensor):
-    _key = SENSOR_BATTERY_SERIAL
-    _name = "Battery Serial Number"
-    _address = REG_BATTERY_SERIAL
-    _attr_device_class = None
-    _attr_native_unit_of_measurement = None
-    _attr_state_class = None
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_entity_registry_enabled_default = False
-
-    @property
-    def native_value(self):
-        if self.coordinator.data is None:
-            return None
-        val = self.coordinator.data.get(self._address)
-        return str(val) if val is not None else None
-
-
 class KostalBatteryMgmtModeSensor(KostalBaseSensor):
     _key = SENSOR_BATTERY_MGMT_MODE
     _name = "Battery Management Mode"
@@ -531,7 +510,7 @@ class KostalBatteryFirmwareSensor(KostalBaseSensor):
 
 class KostalBatteryBmsSerialSensor(KostalBaseSensor):
     _key = SENSOR_BATTERY_BMS_SERIAL
-    _name = "Battery Pack Serial Number"
+    _name = "Battery Serial Number"
     _address = REG_BATTERY_BMS_SERIAL
     _attr_device_class = None
     _attr_native_unit_of_measurement = None

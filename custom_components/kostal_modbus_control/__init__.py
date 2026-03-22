@@ -36,7 +36,6 @@ from .const import (
     CONF_INVERTER_TYPE,
     INVERTER_TYPE_BI,
     REG_BATTERY_WORK_CAPACITY,
-    REG_BATTERY_SERIAL,
     REG_BATTERY_MGMT_MODE,
     REG_BATTERY_TYPE,
     REG_BATTERY_CHARGE_CURRENT,
@@ -104,7 +103,6 @@ class KostalCoordinator(DataUpdateCoordinator):
             data[REG_SENSOR_TYPE] = await self._handler.read_uint8(REG_SENSOR_TYPE)
             data[REG_BATTERY_MGMT_MODE] = await self._handler.read_uint8(REG_BATTERY_MGMT_MODE)
             # U32 registers
-            data[REG_BATTERY_SERIAL] = await self._handler.read_uint32(REG_BATTERY_SERIAL)
             data[REG_BATTERY_GROSS_CAPACITY] = await self._handler.read_uint32(REG_BATTERY_GROSS_CAPACITY)
             data[REG_BATTERY_MODEL_ID] = await self._handler.read_uint32(REG_BATTERY_MODEL_ID)
             data[REG_BATTERY_BMS_SERIAL] = await self._handler.read_uint32(REG_BATTERY_BMS_SERIAL)

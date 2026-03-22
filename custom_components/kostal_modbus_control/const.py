@@ -41,7 +41,7 @@ REG_BATTERY_CHARGE_CURRENT = 190  # Battery charge current (A) - Float (0xBE)
 REG_BATTERY_CYCLES = 194          # Number of battery cycles - Float (0xC2)
 REG_BATTERY_GROSS_CAPACITY = 512  # Battery gross capacity (Ah) - U32 (0x200)
 REG_BATTERY_MODEL_ID = 525        # Battery Model ID - U32 (0x20D)
-REG_BATTERY_BMS_SERIAL = 527      # Battery Serial Number - U32 (0x20F)
+REG_BATTERY_BMS_SERIAL = 527      # Battery serial number - U32 (0x20F)
 REG_BATTERY_POWER = 582           # Actual battery charge/discharge power (W) - S16, negative=charge
 REG_BATTERY_FIRMWARE = 586        # Battery Firmware - U32 (0x24A)
 REG_BATTERY_TYPE = 588            # Battery type - U16 (0x24C)
@@ -64,7 +64,6 @@ SENSOR_TYPE_MAP = {
 REG_BATTERY_MAX_CHARGE_LIMIT = 1076    # Max Charge Limit (W) - Float
 REG_BATTERY_MAX_DISCHARGE_LIMIT = 1078 # Max Discharge Limit (W) - Float
 REG_BATTERY_WORK_CAPACITY = 1068       # Battery work capacity (Wh) - Float
-REG_BATTERY_SERIAL = 1070              # Battery serial number - U32
 REG_BATTERY_MGMT_MODE = 1080          # Battery management mode - U8
 
 BATTERY_TYPE_MAP = {
@@ -101,7 +100,6 @@ SENSOR_BATTERY_CHARGE_POWER_SETPOINT = "battery_charge_power_setpoint"
 SENSOR_BATTERY_MAX_CHARGE_POWER_LIMIT = "battery_max_charge_power_limit"
 SENSOR_BATTERY_MAX_DISCHARGE_POWER_LIMIT = "battery_max_discharge_power_limit"
 SENSOR_BATTERY_WORK_CAPACITY = "battery_work_capacity"
-SENSOR_BATTERY_SERIAL = "battery_serial"
 SENSOR_BATTERY_MGMT_MODE = "battery_mgmt_mode"
 SENSOR_BATTERY_TYPE = "battery_type"
 SENSOR_BATTERY_FIRMWARE = "battery_firmware"
