@@ -21,6 +21,7 @@ from .const import (
     REG_CHARGE_RATE,
     REG_DISCHARGE_RATE,
     REG_TOTAL_ACTIVE_POWER,
+    REG_BATTERY_POWER,
     REG_BATTERY_MAX_CHARGE_LIMIT,
     REG_BATTERY_MAX_DISCHARGE_LIMIT,
     REG_CURRENT_PHASE1,
@@ -96,6 +97,8 @@ class KostalBaseSwitch(SwitchEntity):
 
     _attr_has_entity_name = True
     _attr_should_poll = False
+    _auto_resume_on_recovery = False
+    _keep_enabled_on_fault = False
 
     def __init__(self, data, entry_id):
         self._data = data
@@ -103,14 +106,20 @@ class KostalBaseSwitch(SwitchEntity):
         self._attr_unique_id = f"{entry_id}_{self._key}"
         self._attr_name = self._name
         self._remove_timer = None
+        self._start_task = None
         self._attr_is_on = False
         self._related_switches = []
+        self._faulted = False
+        self._resume_pending = False
         
         # Calculate derived timings
         # Loop interval = Inverter Timeout / 2 (send twice per timeout period)
         self._loop_interval = max(int(self._data.inverter_timeout / 2), 5)
         # Wait time = Inverter Timeout + X (e.g., 15s safety buffer)
         self._wait_time_before_start = self._data.inverter_timeout + 15.0
+        self._action_timeout = max(self._wait_time_before_start, 30.0)
+
+        self._data.register_runtime_switch(self)
 
     def set_related_switches(self, switches):
         self._related_switches = switches
@@ -120,6 +129,142 @@ class KostalBaseSwitch(SwitchEntity):
         return DeviceInfo(
             identifiers={(DOMAIN, self._entry_id)},
         )
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {
+            "faulted": self._faulted,
+            "resume_pending": self._resume_pending,
+            "loop_running": self._remove_timer is not None,
+        }
+
+    def _cancel_loop_timer(self) -> None:
+        if self._remove_timer:
+            self._remove_timer()
+            self._remove_timer = None
+
+    def _cancel_start_task(self) -> None:
+        if self._start_task is not None and not self._start_task.done():
+            self._start_task.cancel()
+
+    def _set_resume_pending(self, pending: bool) -> None:
+        self._resume_pending = pending
+        self._data.set_resume_pending(self._key, pending)
+
+    def _mark_loop_running(self) -> None:
+        self._faulted = False
+        if self._resume_pending:
+            _LOGGER.info("%s automatic resume completed", self.name)
+            self._set_resume_pending(False)
+        self.async_write_ha_state()
+
+    def _start_periodic_loop(self) -> None:
+        self._cancel_loop_timer()
+        self._remove_timer = async_track_time_interval(
+            self.hass, self._async_handle_loop_tick, timedelta(seconds=self._loop_interval)
+        )
+        self._mark_loop_running()
+
+    def _schedule_start_loop(self, reason: str) -> None:
+        if self._start_task is not None and not self._start_task.done():
+            return
+        self._start_task = self.hass.async_create_task(self._run_start_loop(reason))
+
+    def handle_connection_restored(self) -> None:
+        if self._keep_enabled_on_fault:
+            if self._attr_is_on and self._faulted:
+                _LOGGER.info("%s cleared communication fault after recovery", self.name)
+                self._faulted = False
+                self.async_write_ha_state()
+            return
+
+        if not self._auto_resume_on_recovery or not self._resume_pending or not self._attr_is_on:
+            return
+
+        if self._remove_timer is not None:
+            return
+
+        if self._start_task is not None and not self._start_task.done():
+            return
+
+        _LOGGER.info("%s scheduling automatic resume after communication recovery", self.name)
+        self._schedule_start_loop("resume")
+        self.async_write_ha_state()
+
+    async def _run_start_loop(self, reason: str) -> None:
+        try:
+            await self._start_loop()
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:
+            await self._handle_runtime_fault(err, reason)
+        finally:
+            self._start_task = None
+
+    async def _run_guarded_action(self, action, phase: str, *args) -> bool:
+        try:
+            await asyncio.wait_for(action(*args), timeout=self._action_timeout)
+            return True
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:
+            await self._handle_runtime_fault(err, phase)
+            return False
+
+    async def _handle_runtime_fault(self, err: Exception, phase: str) -> None:
+        if not self._attr_is_on:
+            return
+
+        self._cancel_loop_timer()
+        self._data.mark_communication_lost(f"{self.name}: {err}")
+        self._faulted = True
+        await self._data.handler.close()
+        self._on_communication_fault()
+
+        if self._auto_resume_on_recovery:
+            self._data.last_stop_time = time.time()
+            self._set_resume_pending(True)
+            _LOGGER.warning(
+                "%s paused after %s failure and will retry after recovery: %s",
+                self.name,
+                phase,
+                err,
+            )
+        elif self._keep_enabled_on_fault:
+            _LOGGER.warning(
+                "%s remains enabled after %s failure: %s",
+                self.name,
+                phase,
+                err,
+            )
+        else:
+            self._attr_is_on = False
+            _LOGGER.warning(
+                "%s turned off after %s failure: %s",
+                self.name,
+                phase,
+                err,
+            )
+
+        self.async_write_ha_state()
+
+    def _on_communication_fault(self) -> None:
+        """Hook for subclasses that need to clear transient runtime state."""
+
+    async def _async_handle_loop_tick(self, *args) -> None:
+        if not self._attr_is_on:
+            return
+        await self._run_guarded_action(self._loop_action, "periodic loop", *args)
+
+    async def _run_stop_action(self) -> None:
+        try:
+            await asyncio.wait_for(self._stop_action(), timeout=self._action_timeout)
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:
+            self._data.mark_communication_lost(f"{self.name}: {err}")
+            _LOGGER.warning("%s stop action failed: %s", self.name, err)
+            await self._data.handler.close()
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the switch on."""
@@ -133,9 +278,11 @@ class KostalBaseSwitch(SwitchEntity):
             if switch is not self and switch.is_on:
                 await switch.async_turn_off()
 
+        self._faulted = False
+        self._set_resume_pending(False)
         self._attr_is_on = True
         self.async_write_ha_state()
-        self.hass.async_create_task(self._start_loop())
+        self._schedule_start_loop("manual start")
 
     async def _start_loop(self) -> None:
         """Background task: wait if needed, then start the periodic loop."""
@@ -149,12 +296,14 @@ class KostalBaseSwitch(SwitchEntity):
 
         # Kør pre-start (f.eks. nulstil 1038/1040) først efter eventuel ventetid,
         # så ingen Modbus-besked nulstiller inverterens 1034-timeout under ventetiden.
-        await self._pre_start_action()
-        await self._loop_action()
+        if not await self._run_guarded_action(self._pre_start_action, "pre-start"):
+            return
+        if not self._attr_is_on:
+            return
+        if not await self._run_guarded_action(self._loop_action, "initial loop"):
+            return
         if self._attr_is_on:
-            self._remove_timer = async_track_time_interval(
-                self.hass, self._loop_action, timedelta(seconds=self._loop_interval)
-            )
+            self._start_periodic_loop()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the switch off."""
@@ -162,11 +311,12 @@ class KostalBaseSwitch(SwitchEntity):
             self.async_write_ha_state()
             return
 
-        if self._remove_timer:
-            self._remove_timer()
-            self._remove_timer = None
+        self._cancel_start_task()
+        self._cancel_loop_timer()
+        self._faulted = False
+        self._set_resume_pending(False)
         self._attr_is_on = False
-        await self._stop_action()
+        await self._run_stop_action()
         self.async_write_ha_state()
 
     def _max_discharge_watts(self) -> float:
@@ -280,6 +430,7 @@ class KostalBaseSwitch(SwitchEntity):
 class KostalChargeStartSwitch(KostalBaseSwitch):
     _key = SWITCH_CHARGE_START
     _name = "Charge Start"
+    _auto_resume_on_recovery = True
 
     def __init__(self, data, entry_id, predbat_switch=None):
         super().__init__(data, entry_id)
@@ -330,11 +481,10 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                 self._predbat_was_charging = False
                 self._predbat_transition_time = time.time()
 
-            await self._loop_action()
+            if not await self._run_guarded_action(self._loop_action, "initial predbat loop"):
+                return
             if self._attr_is_on:
-                self._remove_timer = async_track_time_interval(
-                    self.hass, self._loop_action, timedelta(seconds=self._loop_interval)
-                )
+                self._start_periodic_loop()
             return
 
         await super()._start_loop()
@@ -475,6 +625,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
 class KostalDischargeStartSwitch(KostalBaseSwitch):
     _key = SWITCH_DISCHARGE_START
     _name = "Discharge Start"
+    _auto_resume_on_recovery = True
 
     async def _loop_action(self, *args):
         if not self._attr_is_on:
@@ -491,6 +642,7 @@ class KostalDischargeStartSwitch(KostalBaseSwitch):
 class KostalBlockDischargeSwitch(KostalBaseSwitch):
     _key = SWITCH_BLOCK_DISCHARGE
     _name = "Block Discharge"
+    _auto_resume_on_recovery = True
 
     async def _loop_action(self, *args):
         if not self._attr_is_on:
@@ -513,6 +665,7 @@ class KostalBlockDischargeSwitch(KostalBaseSwitch):
 class KostalBlockChargeSwitch(KostalBaseSwitch):
     _key = SWITCH_BLOCK_CHARGE
     _name = "Block Charge"
+    _auto_resume_on_recovery = True
 
     async def _loop_action(self, *args):
         if not self._attr_is_on:
@@ -531,6 +684,7 @@ class KostalEMSSwitch(KostalBaseSwitch):
     _key = SWITCH_EMS
     _name = "EMS Grid Protection"
     _attr_entity_category = EntityCategory.CONFIG
+    _keep_enabled_on_fault = True
 
     def __init__(self, data, entry_id, charge_start_switch):
         super().__init__(data, entry_id)
@@ -633,6 +787,9 @@ class KostalEMSSwitch(KostalBaseSwitch):
             self.hass, f"{SIGNAL_EMS_STATUS_UPDATED}_{self._entry_id}", "Inactive"
         )
         # EMS does NOT write to Modbus — nothing is written unless a charge switch is active
+
+    def _on_communication_fault(self) -> None:
+        self._ems_smoothed_limit = None
 
 
 class KostalPredbatControlSwitch(KostalBaseSwitch, RestoreEntity):

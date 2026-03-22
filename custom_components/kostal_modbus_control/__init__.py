@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
+from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, Platform
@@ -115,8 +116,13 @@ class KostalCoordinator(DataUpdateCoordinator):
                 await self._handler.write_float(REG_BATTERY_MIN_SOC, self._kostal_data.min_soc)
             if self._kostal_data.max_soc is not None:
                 await self._handler.write_float(REG_BATTERY_MAX_SOC, self._kostal_data.max_soc)
+            recovered = self._kostal_data.mark_communication_restored()
+            if recovered:
+                _LOGGER.info("Communication with Kostal inverter restored")
+                self._kostal_data.notify_connection_restored()
             return data
         except Exception as err:
+            self._kostal_data.mark_communication_lost(str(err))
             raise UpdateFailed(f"Error communicating with Kostal inverter: {err}") from err
 
 
@@ -139,6 +145,39 @@ class KostalData:
     min_soc: float | None = None
     max_soc: float | None = None
     debug_discharge_logging: bool = False
+    communication_ok: bool = True
+    last_error: str | None = None
+    control_fault_latched: bool = False
+    runtime_switches: dict[str, Any] = field(default_factory=dict)
+    resume_pending_switches: set[str] = field(default_factory=set)
+
+    def register_runtime_switch(self, switch: Any) -> None:
+        self.runtime_switches[switch._key] = switch
+
+    def mark_communication_lost(self, error: str | None) -> None:
+        self.communication_ok = False
+        self.last_error = error
+
+    def mark_communication_restored(self) -> bool:
+        was_disconnected = not self.communication_ok
+        self.communication_ok = True
+        self.last_error = None
+        return was_disconnected
+
+    def set_resume_pending(self, switch_key: str, pending: bool) -> None:
+        if pending:
+            self.resume_pending_switches.add(switch_key)
+            self.control_fault_latched = True
+            return
+
+        self.resume_pending_switches.discard(switch_key)
+        self.control_fault_latched = bool(self.resume_pending_switches)
+
+    def notify_connection_restored(self) -> None:
+        for switch in self.runtime_switches.values():
+            handler = getattr(switch, "handle_connection_restored", None)
+            if handler is not None:
+                handler()
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

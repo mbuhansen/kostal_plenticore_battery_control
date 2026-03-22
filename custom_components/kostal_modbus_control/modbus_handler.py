@@ -4,6 +4,14 @@ import asyncio
 import inspect
 from pymodbus.client import AsyncModbusTcpClient
 
+
+class KostalModbusError(Exception):
+    """Base exception for Modbus operation failures."""
+
+
+class KostalModbusConnectionError(KostalModbusError):
+    """Raised when a Modbus operation cannot complete reliably."""
+
 class KostalModbusHandler:
     def __init__(self, host, port, unit_id):
         self._host = host
@@ -13,6 +21,7 @@ class KostalModbusHandler:
         self._lock = asyncio.Lock()
         self._logger = logging.getLogger(__name__)
         self._unit_kwarg = None  # Detected at first use
+        self._operation_timeout = 15.0
 
     async def _ensure_connected(self):
         """Ensure Modbus client is connected. Must be called while holding self._lock."""
@@ -21,7 +30,7 @@ class KostalModbusHandler:
         if not self._client.connected:
             connected = await self._client.connect()
             if not connected:
-                raise ConnectionError("Failed to connect to Modbus host %s:%s" % (self._host, self._port))
+                raise KostalModbusConnectionError("Failed to connect to Modbus host %s:%s" % (self._host, self._port))
 
     async def connect(self):
         """Public connect — acquires lock. Used by config_flow and initial setup."""
@@ -37,6 +46,28 @@ class KostalModbusHandler:
         if self._client:
             self._client.close()
             self._client = None
+
+    async def _run_locked_request(self, description, operation):
+        """Run a Modbus request under the shared lock with timeout and teardown."""
+        async with self._lock:
+            try:
+                await asyncio.wait_for(self._ensure_connected(), timeout=self._operation_timeout)
+                result = await asyncio.wait_for(operation(), timeout=self._operation_timeout)
+            except asyncio.TimeoutError as err:
+                self._logger.warning("Timeout during %s", description)
+                self._close_unlocked()
+                raise KostalModbusConnectionError(f"Timeout during {description}") from err
+            except Exception as err:
+                self._logger.warning("Transport error during %s: %s", description, err)
+                self._close_unlocked()
+                raise KostalModbusConnectionError(f"{description} failed: {err}") from err
+
+            if result.isError():
+                self._logger.warning("Modbus error during %s: %s", description, result)
+                self._close_unlocked()
+                raise KostalModbusConnectionError(f"{description} failed: {result}")
+
+            return result
 
     def _detect_unit_kwarg(self):
         """Detect the parameter name for slave/unit ID in this pymodbus version."""
@@ -78,95 +109,56 @@ class KostalModbusHandler:
 
     async def read_string(self, address, length):
         """Reads a string from holding registers."""
-        async with self._lock:
-            try:
-                await self._ensure_connected()
-                result = await self._safe_read(address, length)
-                
-                if result.isError():
-                    self._logger.error("Error reading string from %s: %s", address, result)
-                    return None
-                
-                # Build raw bytes from registers (Big Endian byte and word order)
-                raw = b"".join(struct.pack(">H", r) for r in result.registers)
-                return raw.decode("utf-8", errors="replace").strip("\x00")
-            except Exception as e:
-                self._logger.error("Exception reading string from %s: %s", address, e)
-                return None
+        result = await self._run_locked_request(
+            f"read string from {address}",
+            lambda: self._safe_read(address, length),
+        )
+
+        raw = b"".join(struct.pack(">H", r) for r in result.registers)
+        return raw.decode("utf-8", errors="replace").strip("\x00")
 
     async def read_float(self, address):
         """Reads a float (32-bit) from two 16-bit registers."""
-        async with self._lock:
-            try:
-                await self._ensure_connected()
-                result = await self._safe_read(address, 2)
-                if result.isError():
-                    self._logger.error("Error reading float from %s: %s", address, result)
-                    return None
-                # Big Endian bytes, Little Endian word order: [low_word, high_word]
-                raw = struct.pack(">HH", result.registers[1], result.registers[0])
-                return struct.unpack(">f", raw)[0]
-            except Exception as e:
-                self._logger.error("Exception reading float from %s: %s", address, e)
-                return None
+        result = await self._run_locked_request(
+            f"read float from {address}",
+            lambda: self._safe_read(address, 2),
+        )
+        raw = struct.pack(">HH", result.registers[1], result.registers[0])
+        return struct.unpack(">f", raw)[0]
 
     async def read_int16(self, address):
         """Reads a signed 16-bit integer from one register."""
-        async with self._lock:
-            try:
-                await self._ensure_connected()
-                result = await self._safe_read(address, 1)
-                if result.isError():
-                    self._logger.error("Error reading int16 from %s: %s", address, result)
-                    return None
-                raw = struct.pack(">H", result.registers[0])
-                return struct.unpack(">h", raw)[0]
-            except Exception as e:
-                self._logger.error("Exception reading int16 from %s: %s", address, e)
-                return None
+        result = await self._run_locked_request(
+            f"read int16 from {address}",
+            lambda: self._safe_read(address, 1),
+        )
+        raw = struct.pack(">H", result.registers[0])
+        return struct.unpack(">h", raw)[0]
 
     async def read_uint8(self, address):
         """Reads an unsigned 8-bit value from the low byte of one register."""
-        async with self._lock:
-            try:
-                await self._ensure_connected()
-                result = await self._safe_read(address, 1)
-                if result.isError():
-                    self._logger.error("Error reading uint8 from %s: %s", address, result)
-                    return None
-                return result.registers[0] & 0xFF
-            except Exception as e:
-                self._logger.error("Exception reading uint8 from %s: %s", address, e)
-                return None
+        result = await self._run_locked_request(
+            f"read uint8 from {address}",
+            lambda: self._safe_read(address, 1),
+        )
+        return result.registers[0] & 0xFF
 
     async def read_uint16(self, address):
         """Reads an unsigned 16-bit value from one register."""
-        async with self._lock:
-            try:
-                await self._ensure_connected()
-                result = await self._safe_read(address, 1)
-                if result.isError():
-                    self._logger.error("Error reading uint16 from %s: %s", address, result)
-                    return None
-                return result.registers[0]
-            except Exception as e:
-                self._logger.error("Exception reading uint16 from %s: %s", address, e)
-                return None
+        result = await self._run_locked_request(
+            f"read uint16 from {address}",
+            lambda: self._safe_read(address, 1),
+        )
+        return result.registers[0]
 
     async def read_uint32(self, address):
         """Reads an unsigned 32-bit value from two 16-bit registers (big endian)."""
-        async with self._lock:
-            try:
-                await self._ensure_connected()
-                result = await self._safe_read(address, 2)
-                if result.isError():
-                    self._logger.error("Error reading uint32 from %s: %s", address, result)
-                    return None
-                raw = struct.pack(">HH", result.registers[0], result.registers[1])
-                return struct.unpack(">I", raw)[0]
-            except Exception as e:
-                self._logger.error("Exception reading uint32 from %s: %s", address, e)
-                return None
+        result = await self._run_locked_request(
+            f"read uint32 from {address}",
+            lambda: self._safe_read(address, 2),
+        )
+        raw = struct.pack(">HH", result.registers[0], result.registers[1])
+        return struct.unpack(">I", raw)[0]
 
     async def write_float(self, address, value):
         """Writes a float value to two 16-bit registers."""
@@ -175,40 +167,21 @@ class KostalModbusHandler:
         high_word, low_word = struct.unpack(">HH", raw)
         registers = [low_word, high_word]
         
-        async with self._lock:
-            try:
-                await self._ensure_connected()
-                result = await self._safe_write(address, registers)
-                
-                if result.isError():
-                    self._logger.error("Error writing to %s: %s", address, result)
-            except Exception as e:
-                self._logger.error("Exception writing to %s: %s", address, e)
-                # Force reconnect on next attempt
-                self._close_unlocked()
+        await self._run_locked_request(
+            f"write float to {address}",
+            lambda: self._safe_write(address, registers),
+        )
 
     async def write_registers(self, address, values):
         """Writes raw register values."""
-        async with self._lock:
-            try:
-                await self._ensure_connected()
-                result = await self._safe_write(address, values)
-                
-                if result.isError():
-                    self._logger.error("Error writing to %s: %s", address, result)
-            except Exception as e:
-                self._logger.error("Exception writing to %s: %s", address, e)
-                self._close_unlocked()
+        await self._run_locked_request(
+            f"write registers to {address}",
+            lambda: self._safe_write(address, values),
+        )
 
     async def write_register(self, address, value):
         """Writes a single 16-bit register using Modbus function 0x06."""
-        async with self._lock:
-            try:
-                await self._ensure_connected()
-                result = await self._safe_write_single(address, value)
-
-                if result.isError():
-                    self._logger.error("Error writing single register to %s: %s", address, result)
-            except Exception as e:
-                self._logger.error("Exception writing single register to %s: %s", address, e)
-                self._close_unlocked()
+        await self._run_locked_request(
+            f"write single register to {address}",
+            lambda: self._safe_write_single(address, value),
+        )
