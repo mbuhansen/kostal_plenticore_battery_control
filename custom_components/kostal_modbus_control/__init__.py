@@ -144,7 +144,6 @@ class KostalData:
     charge_discharge_reg: int = REG_CHARGE_DISCHARGE_LIMIT
     min_soc: float | None = None
     max_soc: float | None = None
-    debug_discharge_logging: bool = False
     communication_ok: bool = True
     last_error: str | None = None
     control_fault_latched: bool = False
