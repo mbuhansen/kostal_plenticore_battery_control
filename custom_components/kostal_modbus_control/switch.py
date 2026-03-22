@@ -500,11 +500,6 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                 self._predbat_transition_time = None
                 self._predbat_was_charging = True
             if self._predbat_discharge_blocked or self._current_discharge_limit_watts() <= 0.0:
-                self._debug_log_discharge_limit(
-                    "predbat charging active, restoring discharge limit; blocked=%s current_limit=%.1f W",
-                    self._predbat_discharge_blocked,
-                    self._current_discharge_limit_watts(),
-                )
                 if await self._restore_max_discharge_limit():
                     self._predbat_discharge_blocked = False
             charge_pct = abs(self._data.charge_rate)
@@ -571,11 +566,6 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                     soc, floor,
                 )
                 self._predbat_discharge_blocked = True
-            self._debug_log_discharge_limit(
-                "predbat hold mode writing 0.0 W because SOC %.1f%% <= floor %.1f%%",
-                soc,
-                floor,
-            )
             await self._data.handler.write_float(REG_DISCHARGE_RATE, 0.0)
         else:
             # Above floor — restore free discharge if 1040 was previously forced to zero.
@@ -631,19 +621,13 @@ class KostalBlockDischargeSwitch(KostalBaseSwitch):
 
     async def _loop_action(self, *args):
         if not self._attr_is_on:
-            self._debug_log_discharge_limit("block discharge loop skipped because switch is off")
             return
         # Write discharge rate 0 to Block Discharge (1040)
         # MUST BE POSITIVE (0 is positive)
-        self._debug_log_discharge_limit("block discharge switch writing 0.0 W")
         await self._data.handler.write_float(REG_DISCHARGE_RATE, 0.0)
 
     async def _stop_action(self):
         self._data.last_stop_time = time.time()
-        self._debug_log_discharge_limit(
-            "block discharge switch turning off, restoring %.1f W",
-            self._max_discharge_watts(),
-        )
         await self._data.handler.write_float(REG_DISCHARGE_RATE, self._max_discharge_watts())
         await self._data.handler.close()
 
