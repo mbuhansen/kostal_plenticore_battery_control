@@ -471,6 +471,53 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
             self.hass, f"{SIGNAL_PREDBAT_STATUS_UPDATED}_{self._entry_id}", status
         )
 
+    def _predbat_hold_decision(self) -> tuple[float | None, float | None, bool | None]:
+        coordinator = self._data.coordinator
+        soc = None
+        if coordinator is not None and coordinator.data is not None:
+            soc = coordinator.data.get(REG_BATTERY_SOC)
+
+        best_limit_state = self.hass.states.get("predbat.best_charge_limit")
+        best_limit = None
+        if best_limit_state is not None:
+            try:
+                best_limit = float(best_limit_state.state)
+            except (ValueError, TypeError):
+                pass
+
+        if soc is None or best_limit is None:
+            return soc, None, None
+
+        floor = best_limit + 1.0
+        return soc, floor, soc <= floor
+
+    def _predbat_charge_stop_pct(self) -> float:
+        soc, floor, should_hold_now = self._predbat_hold_decision()
+        if should_hold_now is None:
+            _LOGGER.warning(
+                "Predbat Control: SOC=%s floor=%s unavailable during charge stop — using signed stop setpoint",
+                soc,
+                floor,
+            )
+            return self._stop_signed_pct_from_active_power()
+
+        if should_hold_now:
+            _LOGGER.info(
+                "Predbat Control: SOC=%.1f%% <= floor=%.1f%% — writing neutral stop setpoint for hold",
+                soc,
+                floor,
+            )
+            return 0.0
+
+        signed_stop_pct = self._stop_signed_pct_from_active_power()
+        _LOGGER.info(
+            "Predbat Control: SOC=%.1f%% > floor=%.1f%% — using signed stop setpoint %s%% before hold",
+            soc,
+            floor,
+            signed_stop_pct,
+        )
+        return signed_stop_pct
+
     async def async_turn_on(self, **kwargs: Any) -> None:
         if self._predbat_switch is not None and self._predbat_switch.is_on:
             self._predbat_startup_block_until = time.time() + 15.0
@@ -574,10 +621,11 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         # Not charging
         if self._predbat_was_charging is True:
             # Transition: charging just stopped.
-            # Write a signed stop setpoint to 1028 and start the 45 second wait.
-            _LOGGER.info("Predbat Control: predbat_charging OFF — waiting 45s before SOC check")
+            # Write either 0 or a signed stop setpoint, then keep the normal 45s wait
+            # before the hold evaluation and any discharge block on 1040.
+            _LOGGER.info("Predbat Control: predbat_charging OFF — waiting 45s before hold evaluation")
             self._set_predbat_status("Waiting")
-            signed_stop_pct = self._stop_signed_pct_from_active_power()
+            signed_stop_pct = self._predbat_charge_stop_pct()
             await self._data.handler.write_float(self._data.charge_discharge_reg, signed_stop_pct)
             self._predbat_transition_time = time.time()
             self._predbat_was_charging = False
@@ -587,6 +635,8 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         elapsed = time.time() - (self._predbat_transition_time or 0.0)
         if elapsed < 45:
             self._set_predbat_status("Waiting")
+            # Let the inverter return to internal control before forcing 1040 to 0.
+            # Blocking discharge too early here can also block PV charging.
             _LOGGER.debug("Predbat Control: %.0fs remaining before SOC check", 45 - elapsed)
             return
 
@@ -594,29 +644,16 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         if not self._attr_is_on:
             return
 
-        # SOC check against predbat.best_charge_limit
-        soc = None
-        coordinator = self._data.coordinator
-        if coordinator is not None and coordinator.data is not None:
-            soc = coordinator.data.get(REG_BATTERY_SOC)
-
-        best_limit_state = self.hass.states.get("predbat.best_charge_limit")
-        best_limit = None
-        if best_limit_state is not None:
-            try:
-                best_limit = float(best_limit_state.state)
-            except (ValueError, TypeError):
-                pass
-
-        if soc is None or best_limit is None:
+        soc, floor, should_hold_now = self._predbat_hold_decision()
+        if should_hold_now is None:
             _LOGGER.warning(
-                "Predbat Control: SOC=%s best_limit=%s unavailable — skipping",
-                soc, best_limit,
+                "Predbat Control: SOC=%s floor=%s unavailable — skipping",
+                soc,
+                floor,
             )
             return
 
-        floor = best_limit + 1.0
-        if soc <= floor:
+        if should_hold_now:
             self._set_predbat_status("Hold")
             # At/below floor — block discharge
             if not self._predbat_discharge_blocked:
@@ -644,7 +681,10 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         # setpoint was already written when predbat_charging went OFF.
         # In normal mode (predbat switch OFF), we always write it here.
         if self._predbat_switch is None or not self._predbat_switch.is_on or self._predbat_was_charging is True:
-            signed_stop_pct = self._stop_signed_pct_from_active_power()
+            if self._predbat_switch is not None and self._predbat_switch.is_on:
+                signed_stop_pct = self._predbat_charge_stop_pct()
+            else:
+                signed_stop_pct = self._stop_signed_pct_from_active_power()
             await self._data.handler.write_float(self._data.charge_discharge_reg, signed_stop_pct)
         self._data.last_stop_time = time.time()
         self._set_predbat_status("Inactive")
