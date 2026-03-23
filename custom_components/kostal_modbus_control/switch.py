@@ -359,8 +359,8 @@ class KostalBaseSwitch(SwitchEntity):
         await self._data.handler.write_float(REG_DISCHARGE_RATE, max_discharge_watts)
         return True
 
-    def _stop_discharge_pct_from_active_power(self) -> float:
-        """Estimate a discharge setpoint from grid-point power and current battery power.
+    def _stop_signed_pct_from_active_power(self) -> float:
+        """Estimate a signed stop setpoint from grid-point power and battery power.
 
         For a smart meter at the grid connection point, register 252 is:
         - positive when importing from grid
@@ -372,6 +372,10 @@ class KostalBaseSwitch(SwitchEntity):
 
         Adding the two removes the battery contribution and gives an estimate of
         the underlying house demand seen at the grid point.
+
+        Result:
+        - positive setpoint when the house still needs battery discharge
+        - negative setpoint when PV surplus is available for battery charge
         """
         coordinator = self._data.coordinator
         if coordinator is None or coordinator.data is None:
@@ -381,34 +385,58 @@ class KostalBaseSwitch(SwitchEntity):
         total_active_power = coordinator.data.get(REG_TOTAL_ACTIVE_POWER)
         battery_power = coordinator.data.get(REG_BATTERY_POWER)
         max_discharge_watts = self._max_discharge_watts()
+        max_charge_watts = self._max_charge_watts()
 
-        if total_active_power is None or battery_power is None or max_discharge_watts <= 0.0:
+        if total_active_power is None or battery_power is None:
             _LOGGER.debug(
-                "Stop setpoint: insufficient data total_active_power=%s battery_power=%s max_discharge_watts=%s",
+                "Stop setpoint: insufficient data total_active_power=%s battery_power=%s",
                 total_active_power,
                 battery_power,
-                max_discharge_watts,
             )
             return 0.0
 
         # Gridpoint meter: import is positive, feed-in is negative.
         # Battery power is negative while charging and positive while discharging.
-        # Summing them estimates the net load after PV contribution.
+        # Summing them estimates the net load after PV contribution, which is
+        # then converted to a signed stop setpoint.
         net_load_after_pv_watts = total_active_power + battery_power
-        target_watts = max(0.0, net_load_after_pv_watts)
-        target_pct = min(100.0, (target_watts / max_discharge_watts) * 100.0)
-        rounded_target_pct = round(target_pct, 1)
+
+        if net_load_after_pv_watts >= 0.0:
+            if max_discharge_watts <= 0.0:
+                _LOGGER.debug(
+                    "Stop setpoint: discharge max unavailable total_active_power=%s battery_power=%s max_discharge_watts=%s",
+                    total_active_power,
+                    battery_power,
+                    max_discharge_watts,
+                )
+                return 0.0
+
+            target_pct = min(100.0, (net_load_after_pv_watts / max_discharge_watts) * 100.0)
+            signed_stop_pct = round(target_pct, 1)
+        else:
+            if max_charge_watts <= 0.0:
+                _LOGGER.debug(
+                    "Stop setpoint: charge max unavailable total_active_power=%s battery_power=%s max_charge_watts=%s",
+                    total_active_power,
+                    battery_power,
+                    max_charge_watts,
+                )
+                return 0.0
+
+            target_pct = min(100.0, (-net_load_after_pv_watts / max_charge_watts) * 100.0)
+            signed_stop_pct = -round(target_pct, 1)
 
         _LOGGER.debug(
-            "Stop setpoint: total_active_power=%.1fW battery_power=%.1fW net_load_after_pv=%.1fW max_discharge=%.1fW stop_pct=%s%%",
+            "Stop setpoint: total_active_power=%.1fW battery_power=%.1fW net_load_after_pv=%.1fW max_charge=%.1fW max_discharge=%.1fW signed_stop_pct=%s%%",
             total_active_power,
             battery_power,
             net_load_after_pv_watts,
+            max_charge_watts,
             max_discharge_watts,
-            rounded_target_pct,
+            signed_stop_pct,
         )
 
-        return rounded_target_pct
+        return signed_stop_pct
 
     async def _pre_start_action(self):
         """Køres straks ved start, inden eventuel ventetid på 1034."""
@@ -545,11 +573,12 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
 
         # Not charging
         if self._predbat_was_charging is True:
-            # Transition: charging just stopped — write calculated stop setpoint and start 45s wait
+            # Transition: charging just stopped.
+            # Write a signed stop setpoint to 1028 and start the 45 second wait.
             _LOGGER.info("Predbat Control: predbat_charging OFF — waiting 45s before SOC check")
             self._set_predbat_status("Waiting")
-            stop_pct = self._stop_discharge_pct_from_active_power()
-            await self._data.handler.write_float(self._data.charge_discharge_reg, stop_pct)
+            signed_stop_pct = self._stop_signed_pct_from_active_power()
+            await self._data.handler.write_float(self._data.charge_discharge_reg, signed_stop_pct)
             self._predbat_transition_time = time.time()
             self._predbat_was_charging = False
             return
@@ -610,13 +639,13 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                     self._predbat_discharge_blocked = False
 
     async def _stop_action(self):
-        # Only write a stop setpoint to 1028 if we were actually charging.
-        # In predbat hold-mode (_predbat_was_charging is False), the calculated
-        # stop setpoint was already written when predbat_charging went OFF.
-        # In normal mode (predbat switch OFF) we always write the stop setpoint here.
+        # Only write a signed stop setpoint to 1028 if we were actually charging.
+        # In predbat hold mode (_predbat_was_charging is False), that stop
+        # setpoint was already written when predbat_charging went OFF.
+        # In normal mode (predbat switch OFF), we always write it here.
         if self._predbat_switch is None or not self._predbat_switch.is_on or self._predbat_was_charging is True:
-            stop_pct = self._stop_discharge_pct_from_active_power()
-            await self._data.handler.write_float(self._data.charge_discharge_reg, stop_pct)
+            signed_stop_pct = self._stop_signed_pct_from_active_power()
+            await self._data.handler.write_float(self._data.charge_discharge_reg, signed_stop_pct)
         self._data.last_stop_time = time.time()
         self._set_predbat_status("Inactive")
         if self._predbat_discharge_blocked:
@@ -644,8 +673,10 @@ class KostalDischargeStartSwitch(KostalBaseSwitch):
 
     async def _stop_action(self):
         self._data.last_stop_time = time.time()
-        stop_pct = self._stop_discharge_pct_from_active_power()
-        await self._data.handler.write_float(self._data.charge_discharge_reg, stop_pct)
+        # Recalculate the signed stop setpoint so the inverter can settle into
+        # either discharge, neutral, or charge depending on live net power.
+        signed_stop_pct = self._stop_signed_pct_from_active_power()
+        await self._data.handler.write_float(self._data.charge_discharge_reg, signed_stop_pct)
         await self._data.handler.close()
 
 
