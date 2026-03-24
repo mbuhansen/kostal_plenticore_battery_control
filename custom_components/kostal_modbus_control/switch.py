@@ -520,8 +520,15 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         if self._predbat_switch is not None and self._predbat_switch.is_on:
-            self._predbat_startup_block_until = time.time() + 15.0
-            self._set_predbat_status("Waiting")
+            # self._predbat_startup_block_until = time.time() + 15.0
+            self._predbat_startup_block_until = None
+            _soc, _limit, should_charge_now = self._predbat_limit_decision()
+            if should_charge_now is None:
+                self._set_predbat_status("Waiting")
+            elif should_charge_now:
+                self._set_predbat_status("Charge")
+            else:
+                self._set_predbat_status("Hold")
         else:
             self._predbat_startup_block_until = None
             self._set_predbat_status("Inactive")
@@ -540,12 +547,12 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
     async def _start_loop(self) -> None:
         """Custom startup for Charge Start in Predbat mode.
 
-        With Predbat enabled, wait 15 seconds before making the first decision
-        to charge or hold. Reads may continue, but no write to 1028 happens
-        until the decision is taken.
+        With Predbat enabled, evaluate the first charge or hold decision
+        immediately. Reads may continue and writes to 1028 are no longer
+        delayed during startup.
         """
         if self._predbat_switch is not None and self._predbat_switch.is_on:
-            await asyncio.sleep(15.0)
+            # await asyncio.sleep(15.0)
             if not self._attr_is_on:
                 self._set_predbat_status("Inactive")
                 return
