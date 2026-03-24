@@ -488,7 +488,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         if soc is None or best_limit is None:
             return soc, None, None
 
-        hold_limit = best_limit + 2.0
+        hold_limit = best_limit + 1.0
         return soc, hold_limit, soc < hold_limit
 
     def _predbat_charge_stop_pct(self) -> float:
