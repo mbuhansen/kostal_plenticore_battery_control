@@ -72,6 +72,7 @@ from .const import (
     CONF_OPERATING_MODE,
     CONF_SOURCE_GRID_POWER_ENTITY,
     CONF_SOURCE_INV1_POWER_ENTITY,
+    CONF_SOURCE_INV1_STATUS_ENTITY,
     CONF_SOURCE_SOC1_ENTITY,
     INVERTER_TYPE_BI,
     OPERATING_MODE_EXTERNAL_GRID_CONTROL,
@@ -93,6 +94,7 @@ from .const import (
     REG_CURRENT_PHASE1,
     REG_CURRENT_PHASE2,
     REG_CURRENT_PHASE3,
+    REG_INVERTER_STATE2,
     REG_SENSOR_TYPE,
     CONF_KSEM_HOST,
     KSEM_PORT,
@@ -150,6 +152,7 @@ class KostalCoordinator(DataUpdateCoordinator):
             data[REG_BATTERY_POWER] = await self._handler.read_int16(REG_BATTERY_POWER)
             # U8 registers
             data[REG_SENSOR_TYPE] = await self._handler.read_uint8(REG_SENSOR_TYPE)
+            data[REG_INVERTER_STATE2] = await self._handler.read_uint32(REG_INVERTER_STATE2)
             data[REG_BATTERY_MGMT_MODE] = await self._handler.read_uint8(REG_BATTERY_MGMT_MODE)
             # U32 registers
             data[REG_INVERTER_STATE] = await self._handler.read_uint32(REG_INVERTER_STATE)
@@ -247,6 +250,7 @@ class KostalData:
     master_block_discharge_entity: str | None = None
     source_soc1_entity: str | None = None
     source_inv1_power_entity: str | None = None
+    source_inv1_status_entity: str | None = None
     source_grid_power_entity: str | None = None
     inv2_min_soc: float = DEFAULT_INV2_MIN_SOC
     inv1_soc_buffer: float = DEFAULT_INV1_SOC_BUFFER
@@ -401,6 +405,7 @@ def _apply_inverter_control_options(options: dict, data: KostalData) -> None:
     data.master_block_discharge_entity = options.get(CONF_MASTER_BLOCK_DISCHARGE_ENTITY) or None
     data.source_soc1_entity = options.get(CONF_SOURCE_SOC1_ENTITY) or None
     data.source_inv1_power_entity = options.get(CONF_SOURCE_INV1_POWER_ENTITY) or None
+    data.source_inv1_status_entity = options.get(CONF_SOURCE_INV1_STATUS_ENTITY) or None
     data.source_grid_power_entity = options.get(CONF_SOURCE_GRID_POWER_ENTITY) or None
 
     data.inv2_min_soc = float(options.get(CONF_INV2_MIN_SOC, DEFAULT_INV2_MIN_SOC))

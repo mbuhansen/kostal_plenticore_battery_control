@@ -40,8 +40,8 @@ from .const import (
     REG_IO_OUTPUT_3,
     REG_IO_OUTPUT_4,
     SWITCH_BLOCK_CHARGE,
-    SWITCH_CHARGE_START,
     SWITCH_BLOCK_DISCHARGE,
+    SWITCH_CHARGE_START,
     SWITCH_DISCHARGE_START,
     SWITCH_EMS,
     SWITCH_INVERTER_CONTROL,
@@ -1109,11 +1109,23 @@ class KostalInverterControlSwitch(KostalBaseSwitch):
         target_watts: float | None = None,
         target_pct: float | None = None,
         house_load: float | None = None,
+        inv1_status_state: str | None = None,
     ) -> None:
+        previous_status = self._data.inverter_control_status
         self._data.inverter_control_status = status
         self._data.inverter_control_target_w = target_watts
         self._data.inverter_control_target_pct = target_pct
         self._data.inverter_control_house_load_w = house_load
+        if status == "Grid Fallback" and previous_status != "Grid Fallback":
+            _LOGGER.info(
+                "Inverter Control: entering Grid Fallback because inverter 1 is not in FeedIn state (inv1_status_state=%s)",
+                inv1_status_state,
+            )
+        elif status != "Grid Fallback" and previous_status == "Grid Fallback":
+            _LOGGER.info(
+                "Inverter Control: leaving Grid Fallback (inv1_status_state=%s)",
+                inv1_status_state,
+            )
         async_dispatcher_send(self.hass, f"{SIGNAL_INVERTER_CONTROL_UPDATED}_{self._entry_id}")
 
     def _control_inputs(self) -> dict[str, float] | None:
@@ -1130,25 +1142,49 @@ class KostalInverterControlSwitch(KostalBaseSwitch):
         soc1 = self._get_float_state(self._data.source_soc1_entity)
         inv1_power = self._get_float_state(self._data.source_inv1_power_entity)
         grid_power = self._get_float_state(self._data.source_grid_power_entity)
+        inv1_status_state = self._get_entity_state_text(self._data.source_inv1_status_entity)
+        inv1_active = self._get_inv1_active_state(inv1_status_state)
 
-        if None in (soc1, soc2, inv1_power, inv2_power, grid_power):
+        if None in (soc2, inv2_power, grid_power):
             _LOGGER.debug(
-                "Inverter Control: insufficient control data soc1=%s soc2=%s inv1_power=%s inv2_power=%s grid_power=%s",
-                soc1,
+                "Inverter Control: insufficient local control data soc2=%s inv2_power=%s grid_power=%s inv1_active=%s inv1_status_state=%s",
                 soc2,
-                inv1_power,
                 inv2_power,
                 grid_power,
+                inv1_active,
+                inv1_status_state,
             )
             return None
 
-        house_load = inv1_power + inv2_power + grid_power
+        if inv1_active is not False and None in (soc1, inv1_power):
+            _LOGGER.debug(
+                "Inverter Control: insufficient inverter 1 control data soc1=%s inv1_power=%s while inverter 1 is active=%s inv1_status_state=%s",
+                soc1,
+                inv1_power,
+                inv1_active,
+                inv1_status_state,
+            )
+            return None
+
+        soc1_value = 0.0 if soc1 is None else float(soc1)
+        inv1_power_value = 0.0 if inv1_power is None else float(inv1_power)
+        inv1_power_for_house_load = 0.0 if inv1_active is False else inv1_power_value
+        house_load = inv1_power_for_house_load + inv2_power + grid_power
+
+        if inv1_active is False:
+            _LOGGER.debug(
+                "Inverter Control: inverter 1 marked inactive by status entity %s, using grid point fallback with inv1_power ignored",
+                self._data.source_inv1_status_entity,
+            )
+
         return {
-            "soc1": float(soc1),
+            "soc1": soc1_value,
             "soc2": float(soc2),
-            "inv1_power": float(inv1_power),
+            "inv1_power": inv1_power_value,
             "inv2_power": float(inv2_power),
             "grid_power": float(grid_power),
+            "inv1_active": inv1_active,
+            "inv1_status_state": inv1_status_state,
             "house_load": float(house_load),
         }
 
@@ -1183,6 +1219,14 @@ class KostalInverterControlSwitch(KostalBaseSwitch):
             "filtered_grid_power": float(filtered_grid_power),
         }
 
+    def _get_entity_state_text(self, entity_id: str | None) -> str | None:
+        if not entity_id:
+            return None
+        state = self.hass.states.get(entity_id)
+        if state is None:
+            return None
+        return str(state.state).strip()
+
     def _get_float_state(self, entity_id: str | None) -> float | None:
         if not entity_id:
             return None
@@ -1202,15 +1246,79 @@ class KostalInverterControlSwitch(KostalBaseSwitch):
             return None
         return state.state == "on"
 
+    def _get_inv1_active_state(self, raw_state_value: str | None) -> bool | None:
+        if raw_state_value is None:
+            return None
+
+        raw_state = raw_state_value.strip().lower()
+        if raw_state in {"unknown", "unavailable", "none", ""}:
+            return False
+
+        # Match the Modbus-based Inverter State sensor values from this integration.
+        active_states = {
+            "feedin",
+        }
+        inactive_states = {
+            "off",
+            "init",
+            "isomeas",
+            "gridcheck",
+            "startup",
+            "unknown-5",
+            "extswitchoff",
+            "standby",
+            "gridsync",
+            "gridprecheck",
+            "gridswitchoff",
+            "overheating",
+            "shutdown",
+            "improperdcvoltage",
+            "esb",
+            "update",
+            "unknown raw",
+        }
+
+        # Keep minimal compatibility for simple helper entities if the user does
+        # not use the built-in Inverter State sensor.
+        generic_active_states = {"on", "online", "connected", "active"}
+        generic_inactive_states = {"offline", "disconnected", "inactive", "error", "fault", "alarm"}
+
+        if raw_state in active_states:
+            return True
+        if raw_state in inactive_states:
+            return False
+        if raw_state in generic_active_states:
+            return True
+        if raw_state in generic_inactive_states:
+            return False
+
+        # Support raw numeric inverter-state values if the source entity exposes
+        # the Modbus code directly instead of the mapped enum label.
+        if raw_state.isdigit():
+            return raw_state == "6"
+
+        return None
+
+    def _get_local_switch_state(self, switch_key: str) -> bool | None:
+        switch = self._data.runtime_switches.get(switch_key)
+        if switch is None:
+            return None
+        return bool(getattr(switch, "is_on", False))
+
+    def _resolve_control_state(self, entity_id: str | None, local_switch_key: str) -> bool | None:
+        if entity_id:
+            return self._get_bool_state(entity_id)
+        return self._get_local_switch_state(local_switch_key)
+
     def _master_mode(self) -> str | None:
         if self._operating_mode() == OPERATING_MODE_EXTERNAL_GRID_CONTROL:
             return "grid_support"
 
         states = {
-            "block_charge": self._get_bool_state(self._data.master_block_charge_entity),
-            "block_discharge": self._get_bool_state(self._data.master_block_discharge_entity),
-            "charge": self._get_bool_state(self._data.master_charge_start_entity),
-            "discharge": self._get_bool_state(self._data.master_discharge_start_entity),
+            "block_charge": self._resolve_control_state(self._data.master_block_charge_entity, SWITCH_BLOCK_CHARGE),
+            "block_discharge": self._resolve_control_state(self._data.master_block_discharge_entity, SWITCH_BLOCK_DISCHARGE),
+            "charge": self._resolve_control_state(self._data.master_charge_start_entity, SWITCH_CHARGE_START),
+            "discharge": self._resolve_control_state(self._data.master_discharge_start_entity, SWITCH_DISCHARGE_START),
         }
         if any(value is None for value in states.values()):
             _LOGGER.debug("Inverter Control: missing master switch state %s", states)
@@ -1237,6 +1345,11 @@ class KostalInverterControlSwitch(KostalBaseSwitch):
         discharge_limit = min(limit_watts, self._max_discharge_watts())
         if discharge_limit <= 0.0:
             return 0.0
+
+        # If inverter 1 is unavailable, inverter 2 should behave like the only
+        # active inverter and follow the grid point directly.
+        if inputs.get("inv1_active") is False:
+            return min(house_load, discharge_limit)
 
         if inputs["soc2"] > self._data.inv2_min_soc:
             return min(house_load, discharge_limit)
@@ -1385,24 +1498,35 @@ class KostalInverterControlSwitch(KostalBaseSwitch):
 
         inputs = self._control_inputs()
         house_load = inputs["house_load"] if inputs is not None else None
+        grid_fallback_active = inputs is not None and inputs.get("inv1_active") is False
 
         if mode == "idle":
             proposed_watts = self._idle_target_watts()
             hysteresis_w = self._data.idle_hysteresis_w
-            status = "Idle Assist"
+            status = "Grid Fallback" if grid_fallback_active else "Idle Assist"
         else:
             proposed_watts = self._active_target_watts(mode)
             hysteresis_w = self._data.active_hysteresis_w
-            status = "Charge" if mode == "charge" else "Discharge"
+            status = "Grid Fallback" if grid_fallback_active else ("Charge" if mode == "charge" else "Discharge")
 
         if proposed_watts is None:
-            self._publish_state("Unavailable", house_load=house_load)
+            self._publish_state(
+                "Unavailable",
+                house_load=house_load,
+                inv1_status_state=inputs.get("inv1_status_state") if inputs is not None else None,
+            )
             await self._data.handler.write_float(self._data.charge_discharge_reg, 0.0)
             return
 
         target_watts = self._smoothed_target_watts(proposed_watts, hysteresis_w, mode)
         target_pct = self._pct_from_target_watts(target_watts)
-        self._publish_state(status, target_watts=target_watts, target_pct=target_pct, house_load=house_load)
+        self._publish_state(
+            status,
+            target_watts=target_watts,
+            target_pct=target_pct,
+            house_load=house_load,
+            inv1_status_state=inputs.get("inv1_status_state") if inputs is not None else None,
+        )
 
         _LOGGER.debug(
             "Inverter Control: mode=%s proposed_watts=%.1f target_watts=%.1f target_pct=%s%%",

@@ -48,6 +48,7 @@ from .const import (
     CONF_OPERATING_MODE,
     CONF_SOURCE_GRID_POWER_ENTITY,
     CONF_SOURCE_INV1_POWER_ENTITY,
+    CONF_SOURCE_INV1_STATUS_ENTITY,
     CONF_SOURCE_SOC1_ENTITY,
     DEFAULT_ACTIVE_HYSTERESIS_W,
     DEFAULT_ACTIVE_MAX_POWER_W,
@@ -252,10 +253,6 @@ class KostalOptionsFlowHandler(config_entries.OptionsFlow):
         if user_input is not None:
             if operating_mode == OPERATING_MODE_HA_INVERTER_CONTROL:
                 required_keys = (
-                    CONF_MASTER_CHARGE_START_ENTITY,
-                    CONF_MASTER_DISCHARGE_START_ENTITY,
-                    CONF_MASTER_BLOCK_CHARGE_ENTITY,
-                    CONF_MASTER_BLOCK_DISCHARGE_ENTITY,
                     CONF_SOURCE_SOC1_ENTITY,
                     CONF_SOURCE_INV1_POWER_ENTITY,
                     CONF_SOURCE_GRID_POWER_ENTITY,
@@ -298,6 +295,7 @@ class KostalOptionsFlowHandler(config_entries.OptionsFlow):
             return schema
 
         sensor_selector = _entity_selector(["sensor", "number", "input_number"])
+        status_selector = _entity_selector(["sensor", "binary_sensor", "input_boolean"])
 
         if operating_mode == OPERATING_MODE_EXTERNAL_GRID_CONTROL:
             _add_option_field(schema, CONF_SOURCE_GRID_POWER_ENTITY, sensor_selector, current.get(CONF_SOURCE_GRID_POWER_ENTITY))
@@ -317,6 +315,7 @@ class KostalOptionsFlowHandler(config_entries.OptionsFlow):
         _add_option_field(schema, CONF_MASTER_BLOCK_DISCHARGE_ENTITY, switch_selector, current.get(CONF_MASTER_BLOCK_DISCHARGE_ENTITY))
         _add_option_field(schema, CONF_SOURCE_SOC1_ENTITY, sensor_selector, current.get(CONF_SOURCE_SOC1_ENTITY))
         _add_option_field(schema, CONF_SOURCE_INV1_POWER_ENTITY, sensor_selector, current.get(CONF_SOURCE_INV1_POWER_ENTITY))
+        _add_option_field(schema, CONF_SOURCE_INV1_STATUS_ENTITY, status_selector, current.get(CONF_SOURCE_INV1_STATUS_ENTITY))
         _add_option_field(schema, CONF_SOURCE_GRID_POWER_ENTITY, sensor_selector, current.get(CONF_SOURCE_GRID_POWER_ENTITY))
         _add_option_field(schema, CONF_INV2_MIN_SOC, _number_selector(0.0, 100.0, 1.0, "%"), current.get(CONF_INV2_MIN_SOC, DEFAULT_INV2_MIN_SOC))
         _add_option_field(schema, CONF_INV1_SOC_BUFFER, _number_selector(0.0, 100.0, 1.0, "%"), current.get(CONF_INV1_SOC_BUFFER, DEFAULT_INV1_SOC_BUFFER))

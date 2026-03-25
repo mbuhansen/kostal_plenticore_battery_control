@@ -19,6 +19,7 @@ CONF_MASTER_BLOCK_CHARGE_ENTITY = "master_block_charge_entity"
 CONF_MASTER_BLOCK_DISCHARGE_ENTITY = "master_block_discharge_entity"
 CONF_SOURCE_SOC1_ENTITY = "source_soc1_entity"
 CONF_SOURCE_INV1_POWER_ENTITY = "source_inv1_power_entity"
+CONF_SOURCE_INV1_STATUS_ENTITY = "source_inv1_status_entity"
 CONF_SOURCE_GRID_POWER_ENTITY = "source_grid_power_entity"
 CONF_GRID_TARGET_W = "grid_target_w"
 CONF_GRID_DEADBAND_W = "grid_deadband_w"
@@ -94,6 +95,7 @@ REG_CURRENT_PHASE1 = 222          # Current phase 1 powermeter (A) - Float (0xDE
 REG_CURRENT_PHASE2 = 232          # Current phase 2 powermeter (A) - Float (0xE8)
 REG_CURRENT_PHASE3 = 242          # Current phase 3 powermeter (A) - Float (0xF2)
 REG_SENSOR_TYPE = 1082            # Installed sensor type - U8 (0x43A)
+REG_INVERTER_STATE2 = 56          # Inverter state2 - U32 (0x38)
 
 SENSOR_TYPE_MAP = {
     0x00: "SDM 630 (B+G E-Tech GmbH)",
@@ -109,7 +111,7 @@ INVERTER_STATE_MAP = {
     2: "IsoMeas",
     3: "GridCheck",
     4: "StartUp",
-    5: "-",
+    5: "Unknown-5",
     6: "FeedIn",
     7: "Throttled",
     8: "ExtSwitchOff",
@@ -159,6 +161,8 @@ SENSOR_CURRENT_PHASE1 = "current_phase1"
 SENSOR_CURRENT_PHASE2 = "current_phase2"
 SENSOR_CURRENT_PHASE3 = "current_phase3"
 SENSOR_SENSOR_TYPE = "sensor_type"
+SENSOR_INVERTER_STATE = "inverter_state"
+SENSOR_INVERTER_STATE_RAW = "inverter_state_raw"
 SENSOR_EMS_STATUS = "ems_status"
 SENSOR_EMS_CHARGE_LIMIT = "ems_charge_limit"
 SENSOR_PREDBAT_STATUS = "predbat_status"

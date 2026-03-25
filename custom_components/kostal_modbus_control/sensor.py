@@ -61,6 +61,7 @@ from .const import (
     REG_CURRENT_PHASE1,
     REG_CURRENT_PHASE2,
     REG_CURRENT_PHASE3,
+    REG_INVERTER_STATE2,
     REG_SENSOR_TYPE,
     SENSOR_TOTAL_ACTIVE_POWER,
     SENSOR_VOLTAGE_PHASE1,
@@ -76,6 +77,8 @@ from .const import (
     SENSOR_CURRENT_PHASE2,
     SENSOR_CURRENT_PHASE3,
     SENSOR_SENSOR_TYPE,
+    SENSOR_INVERTER_STATE,
+    SENSOR_INVERTER_STATE_RAW,
     SENSOR_EMS_STATUS,
     SENSOR_EMS_CHARGE_LIMIT,
     SENSOR_PREDBAT_STATUS,
@@ -144,6 +147,8 @@ async def async_setup_entry(
         KostalCurrentPhase2Sensor(coordinator, entry.entry_id),
         KostalCurrentPhase3Sensor(coordinator, entry.entry_id),
         KostalSensorTypeSensor(coordinator, entry.entry_id),
+        KostalInverterStateSensor(coordinator, entry.entry_id),
+        KostalInverterStateRawSensor(coordinator, entry.entry_id),
         KostalEMSStatusSensor(data, entry.entry_id),
         KostalEMSChargeLimitSensor(data, entry.entry_id),
         KostalPredbatStatusSensor(data, entry.entry_id),
@@ -408,6 +413,40 @@ class KostalSensorTypeSensor(KostalBaseSensor):
         return SENSOR_TYPE_MAP.get(val, f"Unknown (0x{val:02X})")
 
 
+class KostalInverterStateSensor(KostalBaseSensor):
+    _key = SENSOR_INVERTER_STATE
+    _name = "Inverter State"
+    _address = REG_INVERTER_STATE2
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = list(INVERTER_STATE_MAP.values()) + ["Unknown Raw"]
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def native_value(self):
+        if self.coordinator.data is None:
+            return None
+        val = self.coordinator.data.get(self._address)
+        if val is None:
+            return None
+        return INVERTER_STATE_MAP.get(val, "Unknown Raw")
+
+
+class KostalInverterStateRawSensor(KostalBaseSensor):
+    _key = SENSOR_INVERTER_STATE_RAW
+    _name = "Inverter State Raw"
+    _address = REG_INVERTER_STATE2
+    _attr_device_class = None
+    _attr_native_unit_of_measurement = None
+    _attr_state_class = None
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def native_value(self):
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.get(self._address)
+
+
 class KostalEMSStatusSensor(SensorEntity):
     """Sensor showing the current EMS Grid Protection status."""
 
@@ -639,7 +678,7 @@ class KostalInverterStateTextSensor(KostalBaseSensor):
 
 class KostalInverterControlStatusSensor(KostalInverterControlBaseSensor):
     _attr_device_class = SensorDeviceClass.ENUM
-    _attr_options = ["Inactive", "Unavailable", "Block Charge", "Block Discharge", "Charge", "Discharge", "Idle Assist", "Grid Support", "Grid Idle"]
+    _attr_options = ["Inactive", "Unavailable", "Block Charge", "Block Discharge", "Charge", "Discharge", "Idle Assist", "Grid Support", "Grid Idle", "Grid Fallback"]
 
     def __init__(self, data, entry_id: str) -> None:
         super().__init__(data, entry_id, SENSOR_INVERTER_CONTROL_STATUS, "Inverter Control Status")

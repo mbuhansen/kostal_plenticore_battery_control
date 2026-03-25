@@ -32,7 +32,7 @@
     },
     "options": {
         "error": {
-            "missing_ha_control_fields": "Fill in all HA Inverter Control entity fields before saving.",
+            "missing_ha_control_fields": "Fill in the source entities needed for HA Inverter Control before saving.",
             "missing_external_control_fields": "Fill in the external grid power entity before saving."
         },
         "step": {
@@ -41,12 +41,13 @@
                 "data": {
                     "min_soc": "Minimum SOC (%, blank = no limit)",
                     "max_soc": "Maximum SOC (%, blank = no limit)",
-                    "master_charge_start_entity": "Master Charge Start entity",
-                    "master_discharge_start_entity": "Master Discharge Start entity",
-                    "master_block_charge_entity": "Master Block Charge entity",
-                    "master_block_discharge_entity": "Master Block Discharge entity",
+                    "master_charge_start_entity": "Master Charge Start entity (optional)",
+                    "master_discharge_start_entity": "Master Discharge Start entity (optional)",
+                    "master_block_charge_entity": "Master Block Charge entity (optional)",
+                    "master_block_discharge_entity": "Master Block Discharge entity (optional)",
                     "source_soc1_entity": "Source SOC1 entity",
                     "source_inv1_power_entity": "Source inverter 1 power entity",
+                    "source_inv1_status_entity": "Source inverter 1 status entity (optional, e.g. inverter state)",
                     "source_grid_power_entity": "Source grid power entity",
                     "grid_target_w": "Grid target (W)",
                     "grid_deadband_w": "Grid deadband (W)",
@@ -62,7 +63,7 @@
                     "idle_max_power_w": "Idle assist max power (W)",
                     "idle_hysteresis_w": "Idle assist hysteresis (W)"
                 },
-                "description": "SOC values are written directly to the inverter via Modbus. In Normal (with KSEM) mode, only the local inverter settings are used here. In HA Inverter Grid Control (2 inverter) mode, configure the master switch entities, external source entities, and the assist tuning values here. In Single Inverter Grid Control mode, configure the external grid-power entity and the grid-trim tuning values here. Leave SOC limits blank to leave the inverter setting unchanged."
+                "description": "SOC values are written directly to the inverter via Modbus. In Normal (with KSEM) mode, only the local inverter settings are used here. In HA Inverter Grid Control (2 inverter) mode, configure the source entities and assist tuning values here. Mirror switch entities are optional; if left blank, this inverter uses its own local Charge/Discharge/Block switches instead. The inverter 1 status entity is also optional; the recommended source is inverter 1's Inverter State sensor from this integration. If it indicates inverter 1 is offline or inactive, inverter 2 ignores inverter 1 power and falls back to the grid point. In Single Inverter Grid Control mode, configure the external grid-power entity and the grid-trim tuning values here. Leave SOC limits blank to leave the inverter setting unchanged."
             }
         }
     }
