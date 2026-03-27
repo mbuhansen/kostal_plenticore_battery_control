@@ -54,6 +54,27 @@ from .modbus_handler import KostalModbusHandler
 
 _LOGGER = logging.getLogger(__name__)
 
+
+def _write_activity_entry(
+    hass: HomeAssistant,
+    entity_id: str | None,
+    name: str,
+    message: str,
+) -> None:
+    """Write a concise entry to Home Assistant's activity log."""
+    if not entity_id:
+        return
+
+    hass.bus.async_fire(
+        "logbook_entry",
+        {
+            "name": name,
+            "message": message,
+            "domain": DOMAIN,
+            "entity_id": entity_id,
+        },
+    )
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -156,10 +177,19 @@ class KostalBaseSwitch(SwitchEntity):
         self._resume_pending = pending
         self._data.set_resume_pending(self._key, pending)
 
+    def _write_activity(self, message: str) -> None:
+        _write_activity_entry(
+            self.hass,
+            getattr(self, "entity_id", None),
+            self.name,
+            message,
+        )
+
     def _mark_loop_running(self) -> None:
         self._faulted = False
         if self._resume_pending:
             _LOGGER.info("%s automatic resume completed", self.name)
+            self._write_activity("automatic resume completed")
             self._set_resume_pending(False)
         self.async_write_ha_state()
 
@@ -193,6 +223,7 @@ class KostalBaseSwitch(SwitchEntity):
             return
 
         _LOGGER.info("%s scheduling automatic resume after communication recovery", self.name)
+        self._write_activity("automatic resume scheduled after communication recovery")
         self._schedule_start_loop("resume")
         self.async_write_ha_state()
 
@@ -235,6 +266,7 @@ class KostalBaseSwitch(SwitchEntity):
                 phase,
                 err,
             )
+            self._write_activity(f"paused after {phase} failure")
         elif self._keep_enabled_on_fault:
             _LOGGER.warning(
                 "%s remains enabled after %s failure: %s",
@@ -242,6 +274,7 @@ class KostalBaseSwitch(SwitchEntity):
                 phase,
                 err,
             )
+            self._write_activity(f"communication issue during {phase}")
         else:
             self._data.last_stop_time = time.time()
             self._set_resume_pending(False)
@@ -252,6 +285,7 @@ class KostalBaseSwitch(SwitchEntity):
                 phase,
                 err,
             )
+            self._write_activity(f"turned off after {phase} failure")
 
         self.async_write_ha_state()
 
@@ -466,6 +500,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
     def _set_predbat_status(self, status: str) -> None:
         if self._data.predbat_status == status:
             return
+
         self._data.predbat_status = status
         async_dispatcher_send(
             self.hass, f"{SIGNAL_PREDBAT_STATUS_UPDATED}_{self._entry_id}", status
@@ -506,6 +541,9 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                 "Predbat Control: SOC=%.1f%% >= limit=%.1f%% — writing neutral stop setpoint for hold",
                 soc,
                 limit,
+            )
+            self._write_activity(
+                f"Predbat hold: neutral stop setpoint because SOC={soc:.1f}% >= limit={limit:.1f}%"
             )
             return 0.0
 
@@ -574,6 +612,9 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                     soc,
                     limit,
                 )
+                self._write_activity(
+                    f"Predbat startup: charge because SOC={soc:.1f}% < limit={limit:.1f}%"
+                )
                 self._predbat_was_charging = True
                 self._predbat_transition_time = None
                 self._set_predbat_status("Charge")
@@ -582,6 +623,9 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                     "Predbat Control: startup decision = hold because SOC=%.1f%% >= limit=%.1f%%",
                     soc,
                     limit,
+                )
+                self._write_activity(
+                    f"Predbat startup: hold because SOC={soc:.1f}% >= limit={limit:.1f}%"
                 )
                 self._predbat_was_charging = False
                 self._predbat_transition_time = time.time()
@@ -662,6 +706,9 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                 soc,
                 limit,
             )
+            self._write_activity(
+                f"Predbat waiting 45s: SOC={soc:.1f}% >= limit={limit:.1f}%"
+            )
             self._set_predbat_status("Waiting")
             signed_stop_pct = self._predbat_charge_stop_pct()
             await self._data.handler.write_float(self._data.charge_discharge_reg, signed_stop_pct)
@@ -690,6 +737,9 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                     "Predbat Control: SOC=%.1f%% <= limit=%.1f%% — blocking discharge",
                     soc, limit,
                 )
+                self._write_activity(
+                    f"Predbat hold: blocking discharge because SOC={soc:.1f}% <= limit={limit:.1f}%"
+                )
                 self._predbat_discharge_blocked = True
             await self._data.handler.write_float(REG_DISCHARGE_RATE, 0.0)
         else:
@@ -699,6 +749,9 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                 _LOGGER.info(
                     "Predbat Control: SOC=%.1f%% > limit=%.1f%% — releasing inverter",
                     soc, limit,
+                )
+                self._write_activity(
+                    f"Predbat hold: releasing inverter because SOC={soc:.1f}% > limit={limit:.1f}%"
                 )
                 if await self._restore_max_discharge_limit():
                     self._predbat_discharge_blocked = False
@@ -794,6 +847,23 @@ class KostalEMSSwitch(KostalBaseSwitch):
         self._charge_start_switch = charge_start_switch
         self._ems_smoothed_limit: float | None = None  # EMA state
 
+    def _set_ems_status(self, status: str) -> None:
+        if self._data.ems_status == status:
+            return
+
+        previous_status = self._data.ems_status
+        self._data.ems_status = status
+        async_dispatcher_send(
+            self.hass, f"{SIGNAL_EMS_STATUS_UPDATED}_{self._entry_id}", status
+        )
+
+        if status == "Blocked":
+            self._write_activity("EMS blocked charging")
+        elif status == "Protecting":
+            self._write_activity("EMS is limiting charge power")
+        elif status == "Ok" and previous_status in {"Blocked", "Protecting"}:
+            self._write_activity("EMS returned to normal operation")
+
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on EMS — blocked if no smart meter is detected."""
         coordinator = self._data.coordinator
@@ -876,19 +946,13 @@ class KostalEMSSwitch(KostalBaseSwitch):
         )
 
         self._data.ems_charge_limit_pct = target_pct
-        self._data.ems_status = new_status
-        async_dispatcher_send(
-            self.hass, f"{SIGNAL_EMS_STATUS_UPDATED}_{self._entry_id}", new_status
-        )
+        self._set_ems_status(new_status)
         # EMS does NOT write to Modbus — Charge Start is the sole writer to 1034
 
     async def _stop_action(self) -> None:
         self._ems_smoothed_limit = None
         self._data.ems_charge_limit_pct = 100.0
-        self._data.ems_status = "Inactive"
-        async_dispatcher_send(
-            self.hass, f"{SIGNAL_EMS_STATUS_UPDATED}_{self._entry_id}", "Inactive"
-        )
+        self._set_ems_status("Inactive")
         # EMS does NOT write to Modbus — nothing is written unless a charge switch is active
 
     def _on_communication_fault(self) -> None:
