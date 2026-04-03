@@ -18,6 +18,8 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from .const import (
     DOMAIN,
     LOOP_INTERVAL,
+    PREDBAT_CHARGE_START_DELTA,
+    PREDBAT_HOLD_DELTA,
     REG_CHARGE_RATE,
     REG_DISCHARGE_RATE,
     REG_TOTAL_ACTIVE_POWER,
@@ -506,7 +508,9 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
             self.hass, f"{SIGNAL_PREDBAT_STATUS_UPDATED}_{self._entry_id}", status
         )
 
-    def _predbat_limit_decision(self) -> tuple[float | None, float | None, bool | None]:
+    def _predbat_limit_decision(
+        self,
+    ) -> tuple[float | None, float | None, float | None, bool | None]:
         coordinator = self._data.coordinator
         soc = None
         if coordinator is not None and coordinator.data is not None:
@@ -521,37 +525,45 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                 pass
 
         if soc is None or best_limit is None:
-            return soc, None, None
+            return soc, None, None, None
 
-        hold_limit = best_limit + 1.0
-        return soc, hold_limit, soc < hold_limit
+        charge_start_limit = best_limit - PREDBAT_CHARGE_START_DELTA
+        hold_limit = best_limit - PREDBAT_HOLD_DELTA
+        if self._predbat_was_charging is True:
+            should_charge_now = soc < hold_limit
+        else:
+            should_charge_now = soc <= charge_start_limit
+        return soc, charge_start_limit, hold_limit, should_charge_now
 
     def _predbat_charge_stop_pct(self) -> float:
-        soc, limit, should_charge_now = self._predbat_limit_decision()
+        soc, charge_start_limit, hold_limit, should_charge_now = self._predbat_limit_decision()
         if should_charge_now is None:
             _LOGGER.warning(
-                "Predbat Control: SOC=%s limit=%s unavailable during charge stop — using signed stop setpoint",
+                "Predbat Control: SOC=%s start_limit=%s hold_limit=%s unavailable during charge stop — using signed stop setpoint",
                 soc,
-                limit,
+                charge_start_limit,
+                hold_limit,
             )
             return self._stop_signed_pct_from_active_power()
 
         if not should_charge_now:
             _LOGGER.info(
-                "Predbat Control: SOC=%.1f%% >= limit=%.1f%% — writing neutral stop setpoint for hold",
+                "Predbat Control: SOC=%.1f%% >= hold_limit=%.1f%% or inside deadband above charge_start_limit=%.1f%% — writing neutral stop setpoint for hold",
                 soc,
-                limit,
+                hold_limit,
+                charge_start_limit,
             )
             self._write_activity(
-                f"Predbat hold: neutral stop setpoint because SOC={soc:.1f}% >= limit={limit:.1f}%"
+                f"Predbat hold: neutral stop setpoint because SOC={soc:.1f}% is above start limit {charge_start_limit:.1f}%"
             )
             return 0.0
 
         signed_stop_pct = self._stop_signed_pct_from_active_power()
         _LOGGER.info(
-            "Predbat Control: SOC=%.1f%% < limit=%.1f%% — using signed stop setpoint %s%%",
+            "Predbat Control: SOC=%.1f%% below active threshold (start_limit=%.1f%% hold_limit=%.1f%%) — using signed stop setpoint %s%%",
             soc,
-            limit,
+            charge_start_limit,
+            hold_limit,
             signed_stop_pct,
         )
         return signed_stop_pct
@@ -560,7 +572,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         if self._predbat_switch is not None and self._predbat_switch.is_on:
             # self._predbat_startup_block_until = time.time() + 15.0
             self._predbat_startup_block_until = None
-            _soc, _limit, should_charge_now = self._predbat_limit_decision()
+            _soc, _charge_start_limit, _hold_limit, should_charge_now = self._predbat_limit_decision()
             if should_charge_now is None:
                 self._set_predbat_status("Waiting")
             elif should_charge_now:
@@ -595,37 +607,38 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                 self._set_predbat_status("Inactive")
                 return
 
-            soc, limit, should_charge_now = self._predbat_limit_decision()
+            soc, charge_start_limit, hold_limit, should_charge_now = self._predbat_limit_decision()
 
             if should_charge_now is None:
                 _LOGGER.warning(
-                    "Predbat Control: startup decision unavailable because SOC=%s or limit=%s is missing",
+                    "Predbat Control: startup decision unavailable because SOC=%s, start_limit=%s or hold_limit=%s is missing",
                     soc,
-                    limit,
+                    charge_start_limit,
+                    hold_limit,
                 )
                 self._predbat_was_charging = False
                 self._predbat_transition_time = time.time()
                 self._set_predbat_status("Waiting")
             elif should_charge_now:
                 _LOGGER.info(
-                    "Predbat Control: startup decision = charge because SOC=%.1f%% < limit=%.1f%%",
+                    "Predbat Control: startup decision = charge because SOC=%.1f%% <= charge_start_limit=%.1f%%",
                     soc,
-                    limit,
+                    charge_start_limit,
                 )
                 self._write_activity(
-                    f"Predbat startup: charge because SOC={soc:.1f}% < limit={limit:.1f}%"
+                    f"Predbat startup: charge because SOC={soc:.1f}% <= start limit {charge_start_limit:.1f}%"
                 )
                 self._predbat_was_charging = True
                 self._predbat_transition_time = None
                 self._set_predbat_status("Charge")
             else:
                 _LOGGER.info(
-                    "Predbat Control: startup decision = hold because SOC=%.1f%% >= limit=%.1f%%",
+                    "Predbat Control: startup decision = hold because SOC=%.1f%% is above charge_start_limit=%.1f%%",
                     soc,
-                    limit,
+                    charge_start_limit,
                 )
                 self._write_activity(
-                    f"Predbat startup: hold because SOC={soc:.1f}% >= limit={limit:.1f}%"
+                    f"Predbat startup: hold because SOC={soc:.1f}% is above start limit {charge_start_limit:.1f}%"
                 )
                 self._predbat_was_charging = False
                 self._predbat_transition_time = time.time()
@@ -659,12 +672,13 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
             _LOGGER.debug("Predbat Control: Charge Start er OFF — ignorerer Predbat-evaluering")
             self._set_predbat_status("Inactive")
             return
-        soc, limit, should_charge_now = self._predbat_limit_decision()
+        soc, charge_start_limit, hold_limit, should_charge_now = self._predbat_limit_decision()
         if should_charge_now is None:
             _LOGGER.warning(
-                "Predbat Control: SOC=%s limit=%s unavailable — skipping",
+                "Predbat Control: SOC=%s start_limit=%s hold_limit=%s unavailable — skipping",
                 soc,
-                limit,
+                charge_start_limit,
+                hold_limit,
             )
             self._set_predbat_status("Waiting")
             return
@@ -673,9 +687,9 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
             self._set_predbat_status("Charge")
             if self._predbat_was_charging is not True:
                 _LOGGER.info(
-                    "Predbat Control: SOC=%.1f%% < limit=%.1f%% — charging",
+                    "Predbat Control: SOC=%.1f%% <= charge_start_limit=%.1f%% — charging",
                     soc,
-                    limit,
+                    charge_start_limit,
                 )
                 self._predbat_transition_time = None
                 self._predbat_was_charging = True
@@ -702,12 +716,12 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
             # Write either 0 or a signed stop setpoint, then keep the normal 45s wait
             # before the hold evaluation and any discharge block on 1040.
             _LOGGER.info(
-                "Predbat Control: SOC=%.1f%% >= limit=%.1f%% — waiting 45s before hold evaluation",
+                "Predbat Control: SOC=%.1f%% >= hold_limit=%.1f%% — waiting 45s before hold evaluation",
                 soc,
-                limit,
+                hold_limit,
             )
             self._write_activity(
-                f"Predbat waiting 45s: SOC={soc:.1f}% >= limit={limit:.1f}%"
+                f"Predbat waiting 45s: SOC={soc:.1f}% >= hold limit {hold_limit:.1f}%"
             )
             self._set_predbat_status("Waiting")
             signed_stop_pct = self._predbat_charge_stop_pct()
@@ -730,28 +744,28 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
             return
 
         self._set_predbat_status("Hold")
-        if soc <= limit:
-            # At/below best charge limit — block discharge
+        if soc <= hold_limit:
+            # At/below hold limit — block discharge
             if not self._predbat_discharge_blocked:
                 _LOGGER.info(
-                    "Predbat Control: SOC=%.1f%% <= limit=%.1f%% — blocking discharge",
-                    soc, limit,
+                    "Predbat Control: SOC=%.1f%% <= hold_limit=%.1f%% — blocking discharge",
+                    soc, hold_limit,
                 )
                 self._write_activity(
-                    f"Predbat hold: blocking discharge because SOC={soc:.1f}% <= limit={limit:.1f}%"
+                    f"Predbat hold: blocking discharge because SOC={soc:.1f}% <= hold limit {hold_limit:.1f}%"
                 )
                 self._predbat_discharge_blocked = True
             await self._data.handler.write_float(REG_DISCHARGE_RATE, 0.0)
         else:
-            # Above best charge limit — restore free discharge if 1040 was previously forced to zero.
+            # Above hold limit — restore free discharge if 1040 was previously forced to zero.
             discharge_limit_is_blocked = self._current_discharge_limit_watts() <= 0.0
             if self._predbat_discharge_blocked or discharge_limit_is_blocked:
                 _LOGGER.info(
-                    "Predbat Control: SOC=%.1f%% > limit=%.1f%% — releasing inverter",
-                    soc, limit,
+                    "Predbat Control: SOC=%.1f%% > hold_limit=%.1f%% — releasing inverter",
+                    soc, hold_limit,
                 )
                 self._write_activity(
-                    f"Predbat hold: releasing inverter because SOC={soc:.1f}% > limit={limit:.1f}%"
+                    f"Predbat hold: releasing inverter because SOC={soc:.1f}% > hold limit {hold_limit:.1f}%"
                 )
                 if await self._restore_max_discharge_limit():
                     self._predbat_discharge_blocked = False

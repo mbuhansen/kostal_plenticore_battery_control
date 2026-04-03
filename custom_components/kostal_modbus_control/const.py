@@ -118,6 +118,11 @@ SIGNAL_PREDBAT_STATUS_UPDATED = "kostal_modbus_predbat_status"
 # Default loop interval in seconds (from automation: usually 15s)
 LOOP_INTERVAL = 15
 
+# Predbat charge-start hysteresis in percent points relative to
+# predbat.best_charge_limit.
+PREDBAT_CHARGE_START_DELTA = 2.0
+PREDBAT_HOLD_DELTA = 1.0
+
 # Entity descriptions (Switches)
 SWITCH_CHARGE_START = "charge_start"
 SWITCH_DISCHARGE_START = "discharge_start"
