@@ -529,6 +529,8 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
 
         charge_start_limit = best_limit - PREDBAT_CHARGE_START_DELTA
         hold_limit = best_limit - PREDBAT_HOLD_DELTA
+        if best_limit >= 100.0 and (soc >= 100.0 or self._predbat_was_charging is True):
+            return soc, charge_start_limit, hold_limit, True
         if self._predbat_was_charging is True:
             should_charge_now = soc < hold_limit
         else:
