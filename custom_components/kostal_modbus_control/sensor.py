@@ -29,6 +29,9 @@ from .const import (
     INVERTER_TYPE_BI,
     INVERTER_TYPE_HYBRID,
     REG_TOTAL_ACTIVE_POWER,
+    REG_VOLTAGE_PHASE1,
+    REG_VOLTAGE_PHASE2,
+    REG_VOLTAGE_PHASE3,
     REG_BATTERY_SOC,
     REG_BATTERY_POWER,
     REG_BATTERY_VOLTAGE,
@@ -55,6 +58,9 @@ from .const import (
     REG_CURRENT_PHASE3,
     REG_SENSOR_TYPE,
     SENSOR_TOTAL_ACTIVE_POWER,
+    SENSOR_VOLTAGE_PHASE1,
+    SENSOR_VOLTAGE_PHASE2,
+    SENSOR_VOLTAGE_PHASE3,
     SENSOR_BATTERY_SOC,
     SENSOR_BATTERY_POWER,
     SENSOR_BATTERY_VOLTAGE,
@@ -109,6 +115,9 @@ async def async_setup_entry(
         KostalBatteryTempSensor(coordinator, entry.entry_id),
         KostalBatteryMaxChargeLimitSensor(coordinator, entry.entry_id),
         KostalBatteryMaxDischargeLimitSensor(coordinator, entry.entry_id),
+        KostalVoltagePhase1Sensor(coordinator, entry.entry_id),
+        KostalVoltagePhase2Sensor(coordinator, entry.entry_id),
+        KostalVoltagePhase3Sensor(coordinator, entry.entry_id),
         KostalCurrentPhase1Sensor(coordinator, entry.entry_id),
         KostalCurrentPhase2Sensor(coordinator, entry.entry_id),
         KostalCurrentPhase3Sensor(coordinator, entry.entry_id),
@@ -307,6 +316,39 @@ class KostalCurrentPhase3Sensor(KostalBaseSensor):
     _attr_device_class = SensorDeviceClass.CURRENT
     _attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
     _attr_state_class = SensorStateClass.MEASUREMENT
+
+
+class KostalVoltagePhase1Sensor(KostalBaseSensor):
+    _key = SENSOR_VOLTAGE_PHASE1
+    _name = "Grid Voltage Phase 1"
+    _address = REG_VOLTAGE_PHASE1
+    _attr_device_class = SensorDeviceClass.VOLTAGE
+    _attr_native_unit_of_measurement = UnitOfElectricPotential.VOLT
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+
+class KostalVoltagePhase2Sensor(KostalBaseSensor):
+    _key = SENSOR_VOLTAGE_PHASE2
+    _name = "Grid Voltage Phase 2"
+    _address = REG_VOLTAGE_PHASE2
+    _attr_device_class = SensorDeviceClass.VOLTAGE
+    _attr_native_unit_of_measurement = UnitOfElectricPotential.VOLT
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+
+class KostalVoltagePhase3Sensor(KostalBaseSensor):
+    _key = SENSOR_VOLTAGE_PHASE3
+    _name = "Grid Voltage Phase 3"
+    _address = REG_VOLTAGE_PHASE3
+    _attr_device_class = SensorDeviceClass.VOLTAGE
+    _attr_native_unit_of_measurement = UnitOfElectricPotential.VOLT
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
 
 
 class KostalSensorTypeSensor(KostalBaseSensor):
@@ -510,7 +552,7 @@ class KostalBatteryFirmwareSensor(KostalBaseSensor):
 
 class KostalBatteryBmsSerialSensor(KostalBaseSensor):
     _key = SENSOR_BATTERY_BMS_SERIAL
-    _name = "Battery Serial Number"
+    _name = "Battery BMS Serial Number"
     _address = REG_BATTERY_BMS_SERIAL
     _attr_device_class = None
     _attr_native_unit_of_measurement = None
