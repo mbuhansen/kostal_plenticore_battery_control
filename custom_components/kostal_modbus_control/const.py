@@ -126,7 +126,7 @@ LOOP_INTERVAL = 15
 
 # Predbat charge-start hysteresis in percent points relative to
 # predbat.best_charge_limit.
-PREDBAT_CHARGE_START_DELTA = 2.0
+PREDBAT_CHARGE_START_DELTA = 1.0
 PREDBAT_HOLD_DELTA = 1.0
 
 # Entity descriptions (Switches)

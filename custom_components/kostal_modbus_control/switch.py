@@ -527,9 +527,9 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         if soc is None or best_limit is None:
             return soc, None, None, None
 
-        charge_start_limit = best_limit - PREDBAT_CHARGE_START_DELTA
-        hold_limit = best_limit - PREDBAT_HOLD_DELTA
-        if best_limit >= 100.0 and (soc >= 100.0 or self._predbat_was_charging is True):
+        charge_start_limit = max(0.0, best_limit - PREDBAT_CHARGE_START_DELTA)
+        hold_limit = min(100.0, best_limit + PREDBAT_HOLD_DELTA)
+        if best_limit >= 100.0 and self._predbat_was_charging is True:
             return soc, charge_start_limit, hold_limit, True
         if self._predbat_was_charging is True:
             should_charge_now = soc < hold_limit
@@ -550,10 +550,10 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
 
         if not should_charge_now:
             _LOGGER.info(
-                "Predbat Control: SOC=%.1f%% >= hold_limit=%.1f%% or inside deadband above charge_start_limit=%.1f%% — writing neutral stop setpoint for hold",
+                "Predbat Control: SOC=%.1f%% >= charge_start_limit=%.1f%% and not below hold_limit=%.1f%% charge threshold — writing neutral stop setpoint for hold",
                 soc,
-                hold_limit,
                 charge_start_limit,
+                hold_limit,
             )
             self._write_activity(
                 f"Predbat hold: neutral stop setpoint because SOC={soc:.1f}% is above start limit {charge_start_limit:.1f}%"
@@ -604,7 +604,17 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         delayed during startup.
         """
         if self._predbat_switch is not None and self._predbat_switch.is_on:
-            # await asyncio.sleep(15.0)
+            # Respect the same last_stop_time settling delay as the base class.
+            # A previous switch (e.g. Discharge Start) may have written to 1028 recently.
+            time_since_last_stop = time.time() - self._data.last_stop_time
+            if time_since_last_stop < self._wait_time_before_start:
+                sleep_duration = self._wait_time_before_start - time_since_last_stop
+                _LOGGER.info(
+                    "Predbat Control: waiting %.1fs before first write (inverter settling after previous stop)",
+                    sleep_duration,
+                )
+                await asyncio.sleep(sleep_duration)
+
             if not self._attr_is_on:
                 self._set_predbat_status("Inactive")
                 return
@@ -618,8 +628,9 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                     charge_start_limit,
                     hold_limit,
                 )
+                # 1028 not written — no transition wait needed
                 self._predbat_was_charging = False
-                self._predbat_transition_time = time.time()
+                self._predbat_transition_time = None
                 self._set_predbat_status("Waiting")
             elif should_charge_now:
                 _LOGGER.info(
@@ -642,8 +653,9 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                 self._write_activity(
                     f"Predbat startup: hold because SOC={soc:.1f}% is above start limit {charge_start_limit:.1f}%"
                 )
+                # 1028 not written — inverter already in internal control, go directly to hold
                 self._predbat_was_charging = False
-                self._predbat_transition_time = time.time()
+                self._predbat_transition_time = None
                 self._set_predbat_status("Hold")
 
             if not await self._run_guarded_action(self._loop_action, "initial predbat loop"):
@@ -709,8 +721,9 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
             return
 
         if self._predbat_was_charging is None:
+            # 1028 was never written in this session — no transition wait needed
             self._predbat_was_charging = False
-            self._predbat_transition_time = time.time()
+            self._predbat_transition_time = None
 
         # Not charging
         if self._predbat_was_charging is True:
@@ -778,10 +791,9 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         # setpoint was already written when Predbat switched from charge to hold.
         # In normal mode (predbat switch OFF), we always write it here.
         if self._predbat_switch is None or not self._predbat_switch.is_on or self._predbat_was_charging is True:
-            if self._predbat_switch is not None and self._predbat_switch.is_on:
-                signed_stop_pct = self._predbat_charge_stop_pct()
-            else:
-                signed_stop_pct = self._stop_signed_pct_from_active_power()
+            # Always use live power balance on manual stop — the 0.0 hold-transition
+            # setpoint only makes sense when charge completes naturally in _predbat_loop_action.
+            signed_stop_pct = self._stop_signed_pct_from_active_power()
             await self._data.handler.write_float(self._data.charge_discharge_reg, signed_stop_pct)
         self._data.last_stop_time = time.time()
         self._set_predbat_status("Inactive")
