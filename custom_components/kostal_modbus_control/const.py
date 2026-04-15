@@ -19,6 +19,7 @@ REG_MANUFACTURER = 535        # Inverter Manufacturer (String 16)
 REG_MODEL = 768               # Productname (String 32)
 REG_POWER_CLASS = 800         # Power class e.g. "10" (String 32)
 REG_SERIAL = 559              # Inverter Serial Number (String 16)
+REG_INVERTER_STATE = 56       # Inverter state - U32 (0x38)
 REG_CHARGE_DISCHARGE_LIMIT = 1028      # Hybrid: Controls max charge/discharge power (%)
 REG_CHARGE_DISCHARGE_LIMIT_BI = 1030   # BI: Controls max charge/discharge power (%)
 REG_POWER_LIMIT_W = 1034               # Power Limit (Watts) - Negative=Charge, Positive=Discharge
@@ -62,6 +63,28 @@ SENSOR_TYPE_MAP = {
     0x02: "Reserved",
     0x03: "KOSTAL Smart Energy Meter (KOSTAL)",
     0xFF: "No sensor",
+}
+
+INVERTER_STATE_MAP = {
+    0: "Off",
+    1: "Init",
+    2: "IsoMeas",
+    3: "GridCheck",
+    4: "StartUp",
+    5: "-",
+    6: "FeedIn",
+    7: "Throttled",
+    8: "ExtSwitchOff",
+    9: "Update",
+    10: "Standby",
+    11: "GridSync",
+    12: "GridPreCheck",
+    13: "GridSwitchOff",
+    14: "Overheating",
+    15: "Shutdown",
+    16: "ImproperDcVoltage",
+    17: "ESB",
+    18: "Unknown",
 }
 
 REG_BATTERY_MAX_CHARGE_LIMIT = 1076    # Max Charge Limit (W) - Float
@@ -116,6 +139,8 @@ SENSOR_BATTERY_CYCLES = "battery_cycles"
 SENSOR_BATTERY_CHARGE_CURRENT = "battery_charge_current"
 SENSOR_BATTERY_MIN_SOC = "battery_min_soc"
 SENSOR_BATTERY_MAX_SOC = "battery_max_soc"
+SENSOR_INVERTER_STATE = "inverter_state"
+SENSOR_INVERTER_STATE_TEXT = "inverter_state_text"
 
 # Dispatcher signal for EMS status updates (append _{entry_id} when used)
 SIGNAL_EMS_STATUS_UPDATED = "kostal_modbus_ems_status"

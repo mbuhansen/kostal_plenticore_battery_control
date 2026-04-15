@@ -20,6 +20,7 @@ from .const import (
     CONF_MODBUS_TIMEOUT,
     DEFAULT_MODBUS_TIMEOUT,
     LOOP_INTERVAL,
+    REG_INVERTER_STATE,
     REG_MODEL,
     REG_POWER_CLASS,
     REG_TOTAL_ACTIVE_POWER,
@@ -109,6 +110,7 @@ class KostalCoordinator(DataUpdateCoordinator):
             data[REG_SENSOR_TYPE] = await self._handler.read_uint8(REG_SENSOR_TYPE)
             data[REG_BATTERY_MGMT_MODE] = await self._handler.read_uint8(REG_BATTERY_MGMT_MODE)
             # U32 registers
+            data[REG_INVERTER_STATE] = await self._handler.read_uint32(REG_INVERTER_STATE)
             data[REG_BATTERY_GROSS_CAPACITY] = await self._handler.read_uint32(REG_BATTERY_GROSS_CAPACITY)
             data[REG_BATTERY_MODEL_ID] = await self._handler.read_uint32(REG_BATTERY_MODEL_ID)
             data[REG_BATTERY_BMS_SERIAL] = await self._handler.read_uint32(REG_BATTERY_BMS_SERIAL)

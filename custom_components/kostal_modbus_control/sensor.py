@@ -28,6 +28,7 @@ from .const import (
     DOMAIN,
     INVERTER_TYPE_BI,
     INVERTER_TYPE_HYBRID,
+    REG_INVERTER_STATE,
     REG_TOTAL_ACTIVE_POWER,
     REG_VOLTAGE_PHASE1,
     REG_VOLTAGE_PHASE2,
@@ -90,6 +91,9 @@ from .const import (
     SENSOR_BATTERY_MIN_SOC,
     SENSOR_BATTERY_MAX_SOC,
     BATTERY_TYPE_MAP,
+    INVERTER_STATE_MAP,
+    SENSOR_INVERTER_STATE,
+    SENSOR_INVERTER_STATE_TEXT,
     SENSOR_TYPE_MAP,
     SIGNAL_EMS_STATUS_UPDATED,
     SIGNAL_PREDBAT_STATUS_UPDATED,
@@ -126,6 +130,8 @@ async def async_setup_entry(
         KostalEMSChargeLimitSensor(data, entry.entry_id),
         KostalPredbatStatusSensor(data, entry.entry_id),
         # Diagnostic sensors (disabled by default)
+        KostalInverterStateSensor(coordinator, entry.entry_id),
+        KostalInverterStateTextSensor(coordinator, entry.entry_id),
         KostalBatteryWorkCapacitySensor(coordinator, entry.entry_id),
         KostalBatteryMgmtModeSensor(coordinator, entry.entry_id),
         # Diagnostic sensors (enabled by default)
@@ -483,6 +489,37 @@ class KostalPredbatStatusSensor(SensorEntity):
     @callback
     def _handle_status_update(self, status: str) -> None:
         self.async_write_ha_state()
+
+
+class KostalInverterStateSensor(KostalBaseSensor):
+    _key = SENSOR_INVERTER_STATE
+    _name = "Inverter State"
+    _address = REG_INVERTER_STATE
+    _attr_device_class = None
+    _attr_native_unit_of_measurement = None
+    _attr_state_class = None
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+
+class KostalInverterStateTextSensor(KostalBaseSensor):
+    _key = SENSOR_INVERTER_STATE_TEXT
+    _name = "Inverter State Text"
+    _address = REG_INVERTER_STATE
+    _attr_device_class = None
+    _attr_native_unit_of_measurement = None
+    _attr_state_class = None
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+    @property
+    def native_value(self):
+        if self.coordinator.data is None:
+            return None
+        val = self.coordinator.data.get(self._address)
+        if val is None:
+            return None
+        return INVERTER_STATE_MAP.get(val, f"Unknown ({val})")
 
 
 class KostalBatteryWorkCapacitySensor(KostalBaseSensor):
