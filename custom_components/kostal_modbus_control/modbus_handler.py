@@ -152,12 +152,12 @@ class KostalModbusHandler:
         return result.registers[0]
 
     async def read_uint32(self, address):
-        """Reads an unsigned 32-bit value from two 16-bit registers (big endian)."""
+        """Reads an unsigned 32-bit value from two 16-bit registers with swapped word order."""
         result = await self._run_locked_request(
             f"read uint32 from {address}",
             lambda: self._safe_read(address, 2),
         )
-        raw = struct.pack(">HH", result.registers[0], result.registers[1])
+        raw = struct.pack(">HH", result.registers[1], result.registers[0])
         return struct.unpack(">I", raw)[0]
 
     async def write_float(self, address, value):
