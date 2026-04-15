@@ -497,7 +497,7 @@ class KostalInverterStateSensor(KostalBaseSensor):
     _address = REG_INVERTER_STATE
     _attr_device_class = None
     _attr_native_unit_of_measurement = None
-    _attr_state_class = None
+    _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_entity_registry_enabled_default = False
 
