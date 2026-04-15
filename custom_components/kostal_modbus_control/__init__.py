@@ -20,6 +20,7 @@ from .const import (
     CONF_MODBUS_TIMEOUT,
     DEFAULT_MODBUS_TIMEOUT,
     LOOP_INTERVAL,
+    REG_MODBUS_BYTE_ORDER,
     REG_INVERTER_STATE,
     REG_MODEL,
     REG_POWER_CLASS,
@@ -203,6 +204,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await handler.connect()
     except Exception as err:
         raise ConfigEntryNotReady(f"Cannot connect to Kostal inverter at {host}:{port}") from err
+
+    modbus_byte_order = await handler.read_uint16(REG_MODBUS_BYTE_ORDER)
+    handler.set_modbus_byte_order(modbus_byte_order)
 
     # Read static string registers from inverter
     inverter_model = await handler.read_string(REG_MODEL, 16) or ""

@@ -22,6 +22,39 @@ class KostalModbusHandler:
         self._logger = logging.getLogger(__name__)
         self._unit_kwarg = None  # Detected at first use
         self._operation_timeout = 15.0
+        self._word_swapped_32bit = True
+
+    def set_modbus_byte_order(self, byte_order):
+        """Apply inverter Modbus byte-order setting for 32-bit values."""
+        if byte_order == 0x00:
+            self._word_swapped_32bit = True
+            self._logger.info("Using inverter Modbus byte order: little-endian (CDAB)")
+            return
+
+        if byte_order == 0x01:
+            self._word_swapped_32bit = False
+            self._logger.info("Using inverter Modbus byte order: big-endian (ABCD)")
+            return
+
+        self._logger.warning(
+            "Unknown inverter Modbus byte order value %s; keeping %s 32-bit word order",
+            byte_order,
+            "swapped" if self._word_swapped_32bit else "normal",
+        )
+
+    def _register_words_to_bytes(self, first_word, second_word):
+        """Build 32-bit raw bytes from two Modbus registers using configured word order."""
+        if self._word_swapped_32bit:
+            return struct.pack(">HH", second_word, first_word)
+        return struct.pack(">HH", first_word, second_word)
+
+    def _float_to_register_words(self, value):
+        """Encode a float into two Modbus registers using configured word order."""
+        raw = struct.pack(">f", float(value))
+        high_word, low_word = struct.unpack(">HH", raw)
+        if self._word_swapped_32bit:
+            return [low_word, high_word]
+        return [high_word, low_word]
 
     async def _ensure_connected(self):
         """Ensure Modbus client is connected. Must be called while holding self._lock."""
@@ -123,7 +156,7 @@ class KostalModbusHandler:
             f"read float from {address}",
             lambda: self._safe_read(address, 2),
         )
-        raw = struct.pack(">HH", result.registers[1], result.registers[0])
+        raw = self._register_words_to_bytes(result.registers[0], result.registers[1])
         return struct.unpack(">f", raw)[0]
 
     async def read_int16(self, address):
@@ -152,20 +185,17 @@ class KostalModbusHandler:
         return result.registers[0]
 
     async def read_uint32(self, address):
-        """Reads an unsigned 32-bit value from two 16-bit registers with swapped word order."""
+        """Reads an unsigned 32-bit value from two 16-bit registers using configured word order."""
         result = await self._run_locked_request(
             f"read uint32 from {address}",
             lambda: self._safe_read(address, 2),
         )
-        raw = struct.pack(">HH", result.registers[1], result.registers[0])
+        raw = self._register_words_to_bytes(result.registers[0], result.registers[1])
         return struct.unpack(">I", raw)[0]
 
     async def write_float(self, address, value):
         """Writes a float value to two 16-bit registers."""
-        # Big Endian bytes, Little Endian word order: write [low_word, high_word]
-        raw = struct.pack(">f", float(value))
-        high_word, low_word = struct.unpack(">HH", raw)
-        registers = [low_word, high_word]
+        registers = self._float_to_register_words(value)
         
         await self._run_locked_request(
             f"write float to {address}",

@@ -15,6 +15,7 @@ DEFAULT_UNIT_ID = 71
 DEFAULT_MODBUS_TIMEOUT = 30  # Default inverter timeout setting
 
 # Modbus Registers (Holding Registers)
+REG_MODBUS_BYTE_ORDER = 5        # Modbus byte order - U16 (0x05) 0=little-endian CDAB, 1=big-endian ABCD
 REG_MANUFACTURER = 535        # Inverter Manufacturer (String 16)
 REG_MODEL = 768               # Productname (String 32)
 REG_POWER_CLASS = 800         # Power class e.g. "10" (String 32)
