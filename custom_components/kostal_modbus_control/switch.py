@@ -864,7 +864,7 @@ class KostalBlockChargeSwitch(KostalBaseSwitch):
         await self._data.handler.close()
 
 
-class KostalEMSSwitch(KostalBaseSwitch):
+class KostalEMSSwitch(KostalBaseSwitch, RestoreEntity):
     _key = SWITCH_EMS
     _name = "EMS Grid Protection"
     _attr_entity_category = EntityCategory.CONFIG
@@ -874,6 +874,17 @@ class KostalEMSSwitch(KostalBaseSwitch):
         super().__init__(data, entry_id)
         self._charge_start_switch = charge_start_switch
         self._ems_smoothed_limit: float | None = None  # EMA state
+
+    async def async_added_to_hass(self) -> None:
+        """Restore on/off state after HA restart."""
+        last = await self.async_get_last_state()
+        if last is not None:
+            self._attr_is_on = last.state == "on"
+
+        if self._attr_is_on:
+            self._schedule_start_loop("state restore")
+
+        self.async_write_ha_state()
 
     def _set_ems_status(self, status: str) -> None:
         if self._data.ems_status == status:
