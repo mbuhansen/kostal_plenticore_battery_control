@@ -125,6 +125,7 @@ SENSOR_SENSOR_TYPE = "sensor_type"
 SENSOR_EMS_STATUS = "ems_status"
 SENSOR_EMS_CHARGE_LIMIT = "ems_charge_limit"
 SENSOR_PREDBAT_STATUS = "predbat_status"
+SENSOR_PREDBAT_MODE = "predbat_mode"
 SENSOR_BATTERY_CHARGE_CURRENT_SETPOINT = "battery_charge_current_setpoint"
 SENSOR_BATTERY_CHARGE_POWER_SETPOINT = "battery_charge_power_setpoint"
 SENSOR_BATTERY_MAX_CHARGE_POWER_LIMIT = "battery_max_charge_power_limit"
@@ -150,6 +151,13 @@ SIGNAL_PREDBAT_STATUS_UPDATED = "kostal_modbus_predbat_status"
 # Default loop interval in seconds (from automation: usually 15s)
 LOOP_INTERVAL = 15
 
+# Predbat auto-detect
+PREDBAT_MODE_ENTITY = "select.predbat_mode"
+PREDBAT_ACTIVE_MODES = frozenset({
+    "Control SOC only",
+    "Control charge",
+    "Control charge & discharge",
+})
 # Predbat charge-start hysteresis in percent points relative to
 # predbat.best_charge_limit.
 PREDBAT_CHARGE_START_DELTA = 1.0
@@ -161,7 +169,6 @@ SWITCH_DISCHARGE_START = "discharge_start"
 SWITCH_BLOCK_CHARGE = "block_charge"
 SWITCH_BLOCK_DISCHARGE = "block_discharge"
 SWITCH_EMS = "ems_grid_protection"
-SWITCH_PREDBAT_CONTROL = "predbat_control"
 SWITCH_AUTO_RESUME_ON_RECOVERY = "auto_resume_on_recovery"
 SWITCH_IO_OUTPUT_1 = "io_output_1"
 SWITCH_IO_OUTPUT_2 = "io_output_2"

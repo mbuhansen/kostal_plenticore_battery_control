@@ -41,8 +41,9 @@ from .const import (
     SWITCH_BLOCK_DISCHARGE,
     SWITCH_DISCHARGE_START,
     SWITCH_EMS,
-    SWITCH_PREDBAT_CONTROL,
     SWITCH_IO_OUTPUT_1,
+    PREDBAT_MODE_ENTITY,
+    PREDBAT_ACTIVE_MODES,
     SWITCH_IO_OUTPUT_2,
     SWITCH_IO_OUTPUT_3,
     SWITCH_IO_OUTPUT_4,
@@ -84,8 +85,7 @@ async def async_setup_entry(
     """Set up the Kostal Modbus switches."""
     data = hass.data[DOMAIN][entry.entry_id]
     
-    predbat_switch = KostalPredbatControlSwitch(data, entry.entry_id)
-    charge_start_switch = KostalChargeStartSwitch(data, entry.entry_id, predbat_switch)
+    charge_start_switch = KostalChargeStartSwitch(data, entry.entry_id)
     discharge_start_switch = KostalDischargeStartSwitch(data, entry.entry_id)
     block_discharge_switch = KostalBlockDischargeSwitch(data, entry.entry_id)
     block_charge_switch = KostalBlockChargeSwitch(data, entry.entry_id)
@@ -104,7 +104,6 @@ async def async_setup_entry(
         block_discharge_switch,
         block_charge_switch,
         KostalEMSSwitch(data, entry.entry_id, charge_start_switch),
-        predbat_switch,
         # I/O Board outputs (hidden by default)
         KostalIOOutputSwitch(data, entry.entry_id, SWITCH_IO_OUTPUT_1, "I/O Output 1", REG_IO_OUTPUT_1),
         KostalIOOutputSwitch(data, entry.entry_id, SWITCH_IO_OUTPUT_2, "I/O Output 2", REG_IO_OUTPUT_2),
@@ -488,13 +487,19 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
     _name = "Charge Start"
     _auto_resume_on_recovery = True
 
-    def __init__(self, data, entry_id, predbat_switch=None):
+    def __init__(self, data, entry_id):
         super().__init__(data, entry_id)
-        self._predbat_switch = predbat_switch
         self._predbat_was_charging: bool | None = None
         self._predbat_transition_time: float | None = None
         self._predbat_startup_block_until: float | None = None
         self._predbat_discharge_blocked: bool = False
+
+    def _is_predbat_active(self) -> bool:
+        """Return True when select.predbat_mode exists and is in an active control mode."""
+        state = self.hass.states.get(PREDBAT_MODE_ENTITY)
+        if state is None:
+            return False
+        return state.state in PREDBAT_ACTIVE_MODES
 
     def _set_predbat_status(self, status: str) -> None:
         if self._data.predbat_status == status:
@@ -583,7 +588,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         return signed_stop_pct
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        if self._predbat_switch is not None and self._predbat_switch.is_on:
+        if self._is_predbat_active():
             # self._predbat_startup_block_until = time.time() + 15.0
             self._predbat_startup_block_until = None
             _soc, _charge_start_limit, _hold_limit, should_charge_now = self._predbat_limit_decision()
@@ -617,7 +622,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         immediately. Reads may continue and writes to 1028 are no longer
         delayed during startup.
         """
-        if self._predbat_switch is not None and self._predbat_switch.is_on:
+        if self._is_predbat_active():
             # Respect the same last_stop_time settling delay as the base class.
             # A previous switch (e.g. Discharge Start) may have written to 1028 recently.
             time_since_last_stop = time.time() - self._data.last_stop_time
@@ -686,7 +691,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         if not self._attr_is_on:
             self._set_predbat_status("Inactive")
             return
-        if self._predbat_switch is not None and self._predbat_switch.is_on:
+        if self._is_predbat_active():
             await self._predbat_loop_action()
         else:
             self._set_predbat_status("Inactive")
@@ -813,7 +818,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         # In predbat hold mode (_predbat_was_charging is False), that stop
         # setpoint was already written when Predbat switched from charge to hold.
         # In normal mode (predbat switch OFF), we always write it here.
-        if self._predbat_switch is None or not self._predbat_switch.is_on or self._predbat_was_charging is True:
+        if not self._is_predbat_active() or self._predbat_was_charging is True:
             # Always use live power balance on manual stop — the 0.0 hold-transition
             # setpoint only makes sense when charge completes naturally in _predbat_loop_action.
             signed_stop_pct = self._stop_signed_pct_from_active_power()
@@ -1019,29 +1024,6 @@ class KostalEMSSwitch(KostalBaseSwitch, RestoreEntity):
 
     def _on_communication_fault(self) -> None:
         self._ems_smoothed_limit = None
-
-
-class KostalPredbatControlSwitch(KostalBaseSwitch, RestoreEntity):
-    """Flag-only switch — enables Predbat-aware mode in KostalChargeStartSwitch."""
-
-    _key = SWITCH_PREDBAT_CONTROL
-    _name = "Predbat Control"
-    _attr_entity_category = EntityCategory.CONFIG
-
-    async def async_added_to_hass(self) -> None:
-        """Restore on/off state after HA restart."""
-        last = await self.async_get_last_state()
-        if last is not None:
-            self._attr_is_on = last.state == "on"
-        self.async_write_ha_state()
-
-    async def async_turn_on(self, **kwargs: Any) -> None:
-        self._attr_is_on = True
-        self.async_write_ha_state()
-
-    async def async_turn_off(self, **kwargs: Any) -> None:
-        self._attr_is_on = False
-        self.async_write_ha_state()
 
 
 class KostalIOOutputSwitch(SwitchEntity, RestoreEntity):
