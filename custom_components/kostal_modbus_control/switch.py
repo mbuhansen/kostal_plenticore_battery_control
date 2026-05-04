@@ -719,7 +719,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
             return
 
         if self._predbat_car_hold_active():
-            _LOGGER.info(
+            _LOGGER.debug(
                 "Predbat Control: predbat.status contains 'Hold for car' (no active charge window) — overriding to hold"
             )
             should_charge_now = False
@@ -785,9 +785,10 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         if not self._attr_is_on:
             return
 
-        hold_status = "Hold for car" if self._predbat_car_hold_active() else "Hold"
+        car_hold = self._predbat_car_hold_active()
+        hold_status = "Hold for car" if car_hold else "Hold"
         self._set_predbat_status(hold_status)
-        if soc <= hold_limit:
+        if car_hold or soc <= hold_limit:
             # At/below hold limit — block discharge
             if not self._predbat_discharge_blocked:
                 _LOGGER.info(
