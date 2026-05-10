@@ -47,7 +47,7 @@ from .const import (
     REG_BATTERY_WORK_CAPACITY,
     REG_BATTERY_MGMT_MODE,
     REG_BATTERY_TYPE,
-    REG_BATTERY_CHARGE_CURRENT,
+    REG_BATTERY_CURRENT,
     REG_BATTERY_CYCLES,
     REG_BATTERY_GROSS_CAPACITY,
     REG_BATTERY_MODEL_ID,
@@ -88,7 +88,7 @@ from .const import (
     SENSOR_BATTERY_MODEL_ID,
     SENSOR_BATTERY_GROSS_CAPACITY,
     SENSOR_BATTERY_CYCLES,
-    SENSOR_BATTERY_CHARGE_CURRENT,
+    SENSOR_BATTERY_CURRENT,
     SENSOR_BATTERY_MIN_SOC,
     SENSOR_BATTERY_MAX_SOC,
     BATTERY_TYPE_MAP,
@@ -147,7 +147,7 @@ async def async_setup_entry(
         KostalBatteryModelIdSensor(coordinator, entry.entry_id),
         KostalBatteryGrossCapacitySensor(coordinator, entry.entry_id),
         KostalBatteryCyclesSensor(coordinator, entry.entry_id),
-        KostalBatteryChargeCurrentSensor(coordinator, entry.entry_id),
+        KostalBatteryCurrentSensor(coordinator, entry.entry_id),
         KostalBatteryMaxChargePowerLimitSensor(coordinator, entry.entry_id),
         KostalBatteryMaxDischargePowerLimitSensor(coordinator, entry.entry_id),
         # SOC limit sensors (diagnostic, disabled by default)
@@ -692,10 +692,10 @@ class KostalBatteryCyclesSensor(KostalBaseSensor):
     _attr_entity_registry_enabled_default = False
 
 
-class KostalBatteryChargeCurrentSensor(KostalBaseSensor):
-    _key = SENSOR_BATTERY_CHARGE_CURRENT
-    _name = "Battery Charge Current"
-    _address = REG_BATTERY_CHARGE_CURRENT
+class KostalBatteryCurrentSensor(KostalBaseSensor):
+    _key = SENSOR_BATTERY_CURRENT
+    _name = "Battery Current"
+    _address = REG_BATTERY_CURRENT
     _attr_device_class = SensorDeviceClass.CURRENT
     _attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
     _attr_state_class = SensorStateClass.MEASUREMENT
