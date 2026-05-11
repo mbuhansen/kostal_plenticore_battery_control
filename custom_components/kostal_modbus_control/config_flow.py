@@ -17,6 +17,7 @@ from .const import (
     DEFAULT_PORT, DOMAIN, CONF_MODBUS_TIMEOUT, DEFAULT_MODBUS_TIMEOUT, DEFAULT_UNIT_ID,
     CONF_INVERTER_TYPE, INVERTER_TYPE_HYBRID, INVERTER_TYPE_BI,
     CONF_MIN_SOC, CONF_MAX_SOC,
+    CONF_KSEM_HOST, KSEM_PORT, KSEM_SLAVE_ID,
 )
 from .modbus_handler import KostalModbusHandler
 
@@ -41,6 +42,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     # Compatibility with different HA versions
     _attr_domain = DOMAIN
 
+    def __init__(self) -> None:
+        self._inverter_data: dict[str, Any] = {}
+
     @staticmethod
     def async_get_options_flow(
         config_entry: config_entries.ConfigEntry,
@@ -61,14 +65,24 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
             try:
                 await handler.connect()
+                # Detect sensor type to check for KSEM
+                from .const import REG_SENSOR_TYPE
+                sensor_type = await handler.read_uint8(REG_SENSOR_TYPE)
                 await handler.close()
             except Exception:
                 errors["base"] = "cannot_connect"
             else:
+                self._inverter_data = dict(user_input)
                 await self.async_set_unique_id(user_input[CONF_HOST])
                 self._abort_if_unique_id_configured()
-                title = f"Kostal {user_input[CONF_HOST]}"
-                return self.async_create_entry(title=title, data=user_input)
+                # KSEM detected (0x03) — proceed to KSEM step
+                if sensor_type == 0x03:
+                    return await self.async_step_ksem()
+                # No KSEM — create entry directly
+                return self.async_create_entry(
+                    title=f"Kostal {user_input[CONF_HOST]}",
+                    data=self._inverter_data,
+                )
 
         data_schema = vol.Schema(
             {
@@ -88,6 +102,44 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user",
+            data_schema=data_schema,
+            errors=errors,
+        )
+
+    async def async_step_ksem(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Optional step to configure KOSTAL Smart Energy Meter (KSEM)."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            ksem_host = user_input.get(CONF_KSEM_HOST, "").strip()
+            if ksem_host:
+                # Test connection to KSEM
+                ksem_handler = KostalModbusHandler(ksem_host, KSEM_PORT, KSEM_SLAVE_ID)
+                try:
+                    await ksem_handler.connect()
+                    await ksem_handler.close()
+                except Exception:
+                    errors["base"] = "cannot_connect_ksem"
+                else:
+                    self._inverter_data[CONF_KSEM_HOST] = ksem_host
+            # Empty host = skip KSEM
+            if not errors:
+                inverter_host = self._inverter_data[CONF_HOST]
+                return self.async_create_entry(
+                    title=f"Kostal {inverter_host}",
+                    data=self._inverter_data,
+                )
+
+        data_schema = vol.Schema(
+            {
+                vol.Optional(CONF_KSEM_HOST, default=""): str,
+            }
+        )
+
+        return self.async_show_form(
+            step_id="ksem",
             data_schema=data_schema,
             errors=errors,
         )

@@ -10,10 +10,18 @@
                     "inverter_type": "Inverter Type"
                 },
                 "description": "Enter connection details for your Kostal Inverter.\n\n**IMPORTANT:** Remember to change **Battery Management** to **\"External via protocol (Modbus TCP)\"** in the battery settings on the Inverter Web UI. (This requires installer code access).\n\n**Unit ID** should be **71** for battery management registers on Plenticore inverters."
+            },
+            "ksem": {
+                "title": "KOSTAL Smart Energy Meter (KSEM) Detected",
+                "data": {
+                    "ksem_host": "IP Address of KSEM"
+                },
+                "description": "A KOSTAL Smart Energy Meter (KSEM) was detected as the connected energy meter on your inverter.\n\nYou can optionally enter the KSEM's IP address to read energy import and export values directly from it via Modbus TCP.\n\n**Leave the field empty to skip KSEM setup.** All other sensors will still work normally."
             }
         },
         "error": {
-            "cannot_connect": "Unable to connect to the inverter. Check IP address, port, and Unit ID."
+            "cannot_connect": "Unable to connect to the inverter. Check IP address, port, and Unit ID.",
+            "cannot_connect_ksem": "Unable to connect to the KSEM. Check the IP address or leave the field empty to skip."
         },
         "abort": {
             "already_configured": "Device is already configured"

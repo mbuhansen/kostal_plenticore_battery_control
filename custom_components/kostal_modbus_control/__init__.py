@@ -58,6 +58,11 @@ from .const import (
     REG_CURRENT_PHASE2,
     REG_CURRENT_PHASE3,
     REG_SENSOR_TYPE,
+    CONF_KSEM_HOST,
+    KSEM_PORT,
+    KSEM_SLAVE_ID,
+    REG_KSEM_ENERGY_IMPORTED,
+    REG_KSEM_ENERGY_EXPORTED,
 )
 from .modbus_handler import KostalModbusHandler
 
@@ -118,6 +123,18 @@ class KostalCoordinator(DataUpdateCoordinator):
             data[REG_BATTERY_FIRMWARE] = await self._handler.read_uint32(REG_BATTERY_FIRMWARE)
             # U16 register
             data[REG_BATTERY_TYPE] = await self._handler.read_uint16(REG_BATTERY_TYPE)
+            # KSEM energy registers (separate handler, optional)
+            ksem = self._kostal_data.ksem_handler
+            if ksem is not None:
+                for reg, label in (
+                    (REG_KSEM_ENERGY_IMPORTED, "KSEM energy imported"),
+                    (REG_KSEM_ENERGY_EXPORTED, "KSEM energy exported"),
+                ):
+                    try:
+                        data[reg] = await ksem.read_int64(reg)
+                    except Exception as err:
+                        _LOGGER.debug("Failed to read %s: %s", label, err)
+                        data[reg] = None
             # Write SOC limits periodically if configured
             if self._kostal_data.min_soc is not None:
                 await self._handler.write_float(REG_BATTERY_MIN_SOC, self._kostal_data.min_soc)
@@ -156,6 +173,7 @@ class KostalData:
     communication_ok: bool = True
     last_error: str | None = None
     control_fault_latched: bool = False
+    ksem_handler: KostalModbusHandler | None = None
     runtime_switches: dict[str, Any] = field(default_factory=dict)
     resume_pending_switches: set[str] = field(default_factory=set)
 
@@ -237,12 +255,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     charge_discharge_reg = REG_CHARGE_DISCHARGE_LIMIT_BI if inverter_type == INVERTER_TYPE_BI else REG_CHARGE_DISCHARGE_LIMIT
     _LOGGER.info("Inverter type=%r → charge/discharge register=%d", inverter_type, charge_discharge_reg)
 
+    # Set up KSEM handler if configured
+    ksem_handler: KostalModbusHandler | None = None
+    ksem_host = entry.data.get(CONF_KSEM_HOST, "").strip()
+    if ksem_host:
+        ksem_handler = KostalModbusHandler(ksem_host, KSEM_PORT, KSEM_SLAVE_ID)
+        try:
+            await ksem_handler.connect()
+            _LOGGER.info("Connected to KSEM at %s:%s", ksem_host, KSEM_PORT)
+        except Exception as err:
+            _LOGGER.warning("Cannot connect to KSEM at %s — energy sensors will be unavailable: %s", ksem_host, err)
+            ksem_handler = None
+
     data = KostalData(
         handler=handler,
         inverter_timeout=timeout,
         inverter_model=inverter_model,
         inverter_power_class=inverter_power_class,
         charge_discharge_reg=charge_discharge_reg,
+        ksem_handler=ksem_handler,
     )
 
     coordinator = KostalCoordinator(hass, handler, data)
@@ -299,5 +330,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         data: KostalData = hass.data[DOMAIN].pop(entry.entry_id)
         await data.handler.close()
+        if data.ksem_handler is not None:
+            await data.ksem_handler.close()
 
     return unload_ok

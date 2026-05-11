@@ -144,6 +144,16 @@ SENSOR_BATTERY_MAX_SOC = "battery_max_soc"
 SENSOR_INVERTER_STATE = "inverter_state"
 SENSOR_INVERTER_STATE_TEXT = "inverter_state_text"
 
+# KSEM (KOSTAL Smart Energy Meter) Modbus configuration
+CONF_KSEM_HOST = "ksem_host"
+KSEM_PORT = 502
+KSEM_SLAVE_ID = 1
+KSEM_SCALE = 0.0001                   # int64 raw → kWh
+REG_KSEM_ENERGY_IMPORTED = 512        # Consumption from grid (int64)
+REG_KSEM_ENERGY_EXPORTED = 516        # Feed-in to grid (int64)
+SENSOR_KSEM_ENERGY_IMPORTED = "ksem_energy_imported"
+SENSOR_KSEM_ENERGY_EXPORTED = "ksem_energy_exported"
+
 # Dispatcher signal for EMS status updates (append _{entry_id} when used)
 SIGNAL_EMS_STATUS_UPDATED = "kostal_modbus_ems_status"
 SIGNAL_PREDBAT_STATUS_UPDATED = "kostal_modbus_predbat_status"

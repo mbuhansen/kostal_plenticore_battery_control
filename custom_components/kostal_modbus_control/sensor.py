@@ -101,6 +101,12 @@ from .const import (
     SENSOR_PREDBAT_MODE,
     PREDBAT_MODE_ENTITY,
     PREDBAT_ACTIVE_MODES,
+    CONF_KSEM_HOST,
+    KSEM_SCALE,
+    REG_KSEM_ENERGY_IMPORTED,
+    REG_KSEM_ENERGY_EXPORTED,
+    SENSOR_KSEM_ENERGY_IMPORTED,
+    SENSOR_KSEM_ENERGY_EXPORTED,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -154,6 +160,11 @@ async def async_setup_entry(
         KostalBatteryMinSoCSensor(coordinator, entry.entry_id),
         KostalBatteryMaxSoCSensor(coordinator, entry.entry_id),
     ]
+
+    # KSEM energy sensors — only if KSEM was configured
+    if entry.data.get(CONF_KSEM_HOST, "").strip():
+        entities.append(KostalKsemEnergyImportedSensor(coordinator, entry.entry_id))
+        entities.append(KostalKsemEnergyExportedSensor(coordinator, entry.entry_id))
 
     if inverter_type == INVERTER_TYPE_BI:
         entities.append(KostalBatteryChargePowerSetpointSensor(coordinator, entry.entry_id))
@@ -723,3 +734,41 @@ class KostalBatteryMaxSoCSensor(KostalBaseSensor):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_entity_registry_enabled_default = False
+
+
+class KostalKsemEnergyImportedSensor(KostalBaseSensor):
+    _key = SENSOR_KSEM_ENERGY_IMPORTED
+    _name = "Grid Energy Imported"
+    _address = REG_KSEM_ENERGY_IMPORTED
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_suggested_display_precision = 3
+
+    @property
+    def native_value(self):
+        if self.coordinator.data is None:
+            return None
+        val = self.coordinator.data.get(self._address)
+        if val is None:
+            return None
+        return round(val * KSEM_SCALE, 3)
+
+
+class KostalKsemEnergyExportedSensor(KostalBaseSensor):
+    _key = SENSOR_KSEM_ENERGY_EXPORTED
+    _name = "Grid Energy Exported"
+    _address = REG_KSEM_ENERGY_EXPORTED
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_suggested_display_precision = 3
+
+    @property
+    def native_value(self):
+        if self.coordinator.data is None:
+            return None
+        val = self.coordinator.data.get(self._address)
+        if val is None:
+            return None
+        return round(val * KSEM_SCALE, 3)

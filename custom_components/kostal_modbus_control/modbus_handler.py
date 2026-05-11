@@ -193,6 +193,15 @@ class KostalModbusHandler:
         raw = self._register_words_to_bytes(result.registers[0], result.registers[1])
         return struct.unpack(">I", raw)[0]
 
+    async def read_int64(self, address):
+        """Reads a signed 64-bit integer from four 16-bit registers (big-endian ABCDEFGH)."""
+        result = await self._run_locked_request(
+            f"read int64 from {address}",
+            lambda: self._safe_read(address, 4),
+        )
+        raw = struct.pack(">HHHH", *result.registers)
+        return struct.unpack(">q", raw)[0]
+
     async def write_float(self, address, value):
         """Writes a float value to two 16-bit registers."""
         registers = self._float_to_register_words(value)
