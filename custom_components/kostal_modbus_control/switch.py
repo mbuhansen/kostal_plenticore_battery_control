@@ -493,6 +493,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         self._predbat_transition_time: float | None = None
         self._predbat_startup_block_until: float | None = None
         self._predbat_discharge_blocked: bool = False
+        self._predbat_low_power_capping: bool = False
 
     def _is_predbat_active(self) -> bool:
         """Return True when select.predbat_mode exists and is in an active control mode."""
@@ -524,6 +525,44 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
             return False
         status = state.state
         return "Hold for car" in status and "Charging" not in status
+
+    def _is_predbat_low_power_active(self) -> bool:
+        """Return True when switch.predbat_set_charge_low_power is turned on."""
+        state = self.hass.states.get("switch.predbat_set_charge_low_power")
+        if state is None:
+            return False
+        return state.state == "on"
+
+    def _predbat_low_power_charge_pct(self) -> float | None:
+        """Return the Predbat low power charge rate as a percentage of max charge capacity.
+
+        Reads input_number.predbat_charge_rate (Watts) and converts it to a
+        percentage using the battery's maximum charge power. Returns None when
+        low power mode is inactive, when the entity is unavailable, or when the
+        battery maximum charge limit is unknown.
+        """
+        if not self._is_predbat_low_power_active():
+            return None
+
+        rate_state = self.hass.states.get("input_number.predbat_charge_rate")
+        if rate_state is None:
+            _LOGGER.warning("Predbat low power: input_number.predbat_charge_rate not found")
+            return None
+        try:
+            rate_watts = float(rate_state.state)
+        except (ValueError, TypeError):
+            _LOGGER.warning(
+                "Predbat low power: input_number.predbat_charge_rate has non-numeric state '%s'",
+                rate_state.state,
+            )
+            return None
+
+        max_charge_watts = self._max_charge_watts()
+        if max_charge_watts <= 0.0:
+            _LOGGER.warning("Predbat low power: max charge limit unavailable, cannot convert to %%")
+            return None
+
+        return min(100.0, (rate_watts / max_charge_watts) * 100.0)
 
     def _predbat_limit_decision(
         self,
@@ -740,6 +779,24 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
             charge_pct = abs(self._data.charge_rate)
             if self._data.ems_status != "Inactive":
                 charge_pct = min(charge_pct, self._data.ems_charge_limit_pct)
+            low_power_pct = self._predbat_low_power_charge_pct()
+            if low_power_pct is not None and low_power_pct < charge_pct:
+                if not self._predbat_low_power_capping:
+                    _LOGGER.info(
+                        "Predbat low power: capping charge rate from %.1f%% to %.1f%% (input_number.predbat_charge_rate)",
+                        charge_pct,
+                        low_power_pct,
+                    )
+                    self._write_activity(
+                        f"Predbat low power: charge rate capped to {low_power_pct:.1f}%"
+                    )
+                    self._predbat_low_power_capping = True
+                charge_pct = low_power_pct
+            else:
+                if self._predbat_low_power_capping:
+                    _LOGGER.info("Predbat low power: charge rate cap released")
+                    self._write_activity("Predbat low power: charge rate cap released")
+                self._predbat_low_power_capping = False
             if not self._attr_is_on:
                 return
             if self._predbat_startup_write_blocked():
@@ -832,6 +889,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         self._predbat_was_charging = None
         self._predbat_transition_time = None
         self._predbat_startup_block_until = None
+        self._predbat_low_power_capping = False
         # Close the Modbus connection so the inverter sees a clean disconnect.
         # It will reconnect automatically on the next read/write.
         await self._data.handler.close()
