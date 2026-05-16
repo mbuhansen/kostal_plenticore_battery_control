@@ -116,8 +116,26 @@ from .const import (
     KSEM_SCALE,
     REG_KSEM_ENERGY_IMPORTED,
     REG_KSEM_ENERGY_EXPORTED,
+    REG_KSEM_GRID_POWER_TOTAL,
+    REG_KSEM_SUM_OUTPUT_INVERTER_AC,
+    REG_KSEM_SUM_PV_POWER_INVERTER_DC,
+    REG_KSEM_HOME_CONSUMPTION,
+    REG_KSEM_BATTERY_CHARGE_DISCHARGE_DC,
+    REG_KSEM_SYSTEM_SOC,
+    REG_KSEM_HOME_CONSUMPTION_FROM_PV,
+    REG_KSEM_HOME_CONSUMPTION_FROM_BATTERY,
+    REG_KSEM_HOME_CONSUMPTION_FROM_GRID,
     SENSOR_KSEM_ENERGY_IMPORTED,
     SENSOR_KSEM_ENERGY_EXPORTED,
+    SENSOR_KSEM_GRID_POWER_TOTAL,
+    SENSOR_KSEM_SUM_OUTPUT_INVERTER_AC,
+    SENSOR_KSEM_SUM_PV_POWER_INVERTER_DC,
+    SENSOR_KSEM_HOME_CONSUMPTION,
+    SENSOR_KSEM_BATTERY_CHARGE_DISCHARGE_DC,
+    SENSOR_KSEM_SYSTEM_SOC,
+    SENSOR_KSEM_HOME_CONSUMPTION_FROM_PV,
+    SENSOR_KSEM_HOME_CONSUMPTION_FROM_BATTERY,
+    SENSOR_KSEM_HOME_CONSUMPTION_FROM_GRID,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -178,6 +196,15 @@ async def async_setup_entry(
     if entry.data.get(CONF_KSEM_HOST, "").strip():
         entities.append(KostalKsemEnergyImportedSensor(coordinator, entry.entry_id))
         entities.append(KostalKsemEnergyExportedSensor(coordinator, entry.entry_id))
+        entities.append(KostalKsemGridPowerTotalSensor(coordinator, entry.entry_id))
+        entities.append(KostalKsemSumOutputInverterAcSensor(coordinator, entry.entry_id))
+        entities.append(KostalKsemSumPvPowerInverterDcSensor(coordinator, entry.entry_id))
+        entities.append(KostalKsemHomeConsumptionSensor(coordinator, entry.entry_id))
+        entities.append(KostalKsemBatteryChargeDischargeDcSensor(coordinator, entry.entry_id))
+        entities.append(KostalKsemSystemSocSensor(coordinator, entry.entry_id))
+        entities.append(KostalKsemHomeConsumptionFromPvSensor(coordinator, entry.entry_id))
+        entities.append(KostalKsemHomeConsumptionFromBatterySensor(coordinator, entry.entry_id))
+        entities.append(KostalKsemHomeConsumptionFromGridSensor(coordinator, entry.entry_id))
 
     if inverter_type == INVERTER_TYPE_BI:
         entities.append(KostalBatteryChargePowerSetpointSensor(coordinator, entry.entry_id))
@@ -883,7 +910,18 @@ class KostalBatteryMaxSoCSensor(KostalBaseSensor):
     _attr_entity_registry_enabled_default = False
 
 
-class KostalKsemEnergyImportedSensor(KostalBaseSensor):
+class KostalKsemBaseSensor(KostalBaseSensor):
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"{self._entry_id}_ksem")},
+            manufacturer="Kostal",
+            model="KSEM",
+            name="KSEM Sensor",
+        )
+
+
+class KostalKsemEnergyImportedSensor(KostalKsemBaseSensor):
     _key = SENSOR_KSEM_ENERGY_IMPORTED
     _name = "Grid Energy Imported"
     _address = REG_KSEM_ENERGY_IMPORTED
@@ -902,7 +940,7 @@ class KostalKsemEnergyImportedSensor(KostalBaseSensor):
         return round(val * KSEM_SCALE, 3)
 
 
-class KostalKsemEnergyExportedSensor(KostalBaseSensor):
+class KostalKsemEnergyExportedSensor(KostalKsemBaseSensor):
     _key = SENSOR_KSEM_ENERGY_EXPORTED
     _name = "Grid Energy Exported"
     _address = REG_KSEM_ENERGY_EXPORTED
@@ -919,3 +957,93 @@ class KostalKsemEnergyExportedSensor(KostalBaseSensor):
         if val is None:
             return None
         return round(val * KSEM_SCALE, 3)
+
+
+class KostalKsemIntegerSensor(KostalKsemBaseSensor):
+    @property
+    def native_value(self):
+        if self.coordinator.data is None:
+            return None
+        val = self.coordinator.data.get(self._address)
+        return int(val) if val is not None else None
+
+
+class KostalKsemGridPowerTotalSensor(KostalKsemIntegerSensor):
+    _key = SENSOR_KSEM_GRID_POWER_TOTAL
+    _name = "Grid Power Total"
+    _address = REG_KSEM_GRID_POWER_TOTAL
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+
+class KostalKsemSumOutputInverterAcSensor(KostalKsemIntegerSensor):
+    _key = SENSOR_KSEM_SUM_OUTPUT_INVERTER_AC
+    _name = "Sum Output Inverter AC"
+    _address = REG_KSEM_SUM_OUTPUT_INVERTER_AC
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+
+class KostalKsemSumPvPowerInverterDcSensor(KostalKsemIntegerSensor):
+    _key = SENSOR_KSEM_SUM_PV_POWER_INVERTER_DC
+    _name = "Sum PV Power Inverter DC"
+    _address = REG_KSEM_SUM_PV_POWER_INVERTER_DC
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+
+class KostalKsemHomeConsumptionSensor(KostalKsemIntegerSensor):
+    _key = SENSOR_KSEM_HOME_CONSUMPTION
+    _name = "Home Consumption"
+    _address = REG_KSEM_HOME_CONSUMPTION
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+
+class KostalKsemBatteryChargeDischargeDcSensor(KostalKsemIntegerSensor):
+    _key = SENSOR_KSEM_BATTERY_CHARGE_DISCHARGE_DC
+    _name = "Battery Charge / Discharge DC"
+    _address = REG_KSEM_BATTERY_CHARGE_DISCHARGE_DC
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+
+class KostalKsemSystemSocSensor(KostalKsemIntegerSensor):
+    _key = SENSOR_KSEM_SYSTEM_SOC
+    _name = "System State of Charge"
+    _address = REG_KSEM_SYSTEM_SOC
+    _attr_device_class = SensorDeviceClass.BATTERY
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+
+class KostalKsemHomeConsumptionFromPvSensor(KostalKsemIntegerSensor):
+    _key = SENSOR_KSEM_HOME_CONSUMPTION_FROM_PV
+    _name = "Home Consumption from PV"
+    _address = REG_KSEM_HOME_CONSUMPTION_FROM_PV
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+
+class KostalKsemHomeConsumptionFromBatterySensor(KostalKsemIntegerSensor):
+    _key = SENSOR_KSEM_HOME_CONSUMPTION_FROM_BATTERY
+    _name = "Home Consumption from Battery"
+    _address = REG_KSEM_HOME_CONSUMPTION_FROM_BATTERY
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+
+class KostalKsemHomeConsumptionFromGridSensor(KostalKsemIntegerSensor):
+    _key = SENSOR_KSEM_HOME_CONSUMPTION_FROM_GRID
+    _name = "Home Consumption from Grid"
+    _address = REG_KSEM_HOME_CONSUMPTION_FROM_GRID
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_state_class = SensorStateClass.MEASUREMENT
