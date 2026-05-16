@@ -151,8 +151,26 @@ KSEM_SLAVE_ID = 1
 KSEM_SCALE = 0.0001                   # int64 raw → kWh
 REG_KSEM_ENERGY_IMPORTED = 512        # Consumption from grid (int64)
 REG_KSEM_ENERGY_EXPORTED = 516        # Feed-in to grid (int64)
+REG_KSEM_GRID_POWER_TOTAL = 40972     # Grid power Total (int32)
+REG_KSEM_SUM_OUTPUT_INVERTER_AC = 40974  # Sum output inverter AC (int32)
+REG_KSEM_SUM_PV_POWER_INVERTER_DC = 40976  # Sum pv power inverter DC (int32)
+REG_KSEM_HOME_CONSUMPTION = 40982     # Home consumption (int32)
+REG_KSEM_BATTERY_CHARGE_DISCHARGE_DC = 40984  # Sum battery charge / discharge DC (int32)
+REG_KSEM_SYSTEM_SOC = 40986           # System state of charge (uint16)
+REG_KSEM_HOME_CONSUMPTION_FROM_PV = 40988  # Home consumption from PV (uint32)
+REG_KSEM_HOME_CONSUMPTION_FROM_BATTERY = 40990  # Home consumption from battery (uint32)
+REG_KSEM_HOME_CONSUMPTION_FROM_GRID = 40992  # Home consumption from grid (uint32)
 SENSOR_KSEM_ENERGY_IMPORTED = "ksem_energy_imported"
 SENSOR_KSEM_ENERGY_EXPORTED = "ksem_energy_exported"
+SENSOR_KSEM_GRID_POWER_TOTAL = "ksem_grid_power_total"
+SENSOR_KSEM_SUM_OUTPUT_INVERTER_AC = "ksem_sum_output_inverter_ac"
+SENSOR_KSEM_SUM_PV_POWER_INVERTER_DC = "ksem_sum_pv_power_inverter_dc"
+SENSOR_KSEM_HOME_CONSUMPTION = "ksem_home_consumption"
+SENSOR_KSEM_BATTERY_CHARGE_DISCHARGE_DC = "ksem_battery_charge_discharge_dc"
+SENSOR_KSEM_SYSTEM_SOC = "ksem_system_soc"
+SENSOR_KSEM_HOME_CONSUMPTION_FROM_PV = "ksem_home_consumption_from_pv"
+SENSOR_KSEM_HOME_CONSUMPTION_FROM_BATTERY = "ksem_home_consumption_from_battery"
+SENSOR_KSEM_HOME_CONSUMPTION_FROM_GRID = "ksem_home_consumption_from_grid"
 
 # Dispatcher signal for EMS status updates (append _{entry_id} when used)
 SIGNAL_EMS_STATUS_UPDATED = "kostal_modbus_ems_status"

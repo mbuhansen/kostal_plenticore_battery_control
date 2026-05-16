@@ -120,6 +120,20 @@ The EMS (Energy Management System) switch protects your house fuses during force
 | EMS Grid Protection Status | — | Current state of the EMS Grid Protection function |
 | Inverter Control Status | — | Current automatic control mode, including `Grid Fallback` when inverter 1 is not in `FeedIn` |
 
+### KSEM Sensors (when KSEM is configured)
+
+| Sensor | Unit | Description |
+|---|---|---|
+| Grid Power Total | W | Total grid power |
+| Sum Output Inverter AC | W | Sum output inverter AC |
+| Sum PV Power Inverter DC | W | Sum PV power inverter DC |
+| Home Consumption | W | Total home consumption |
+| Battery Charge / Discharge DC | W | Battery DC charge/discharge power |
+| System State of Charge | % | System state of charge |
+| Home Consumption from PV | W | Home consumption covered by PV |
+| Home Consumption from Battery | W | Home consumption covered by battery |
+| Home Consumption from Grid | W | Home consumption covered by grid |
+
 **EMS Grid Protection Status** values:
 
 | Status | Meaning |
@@ -173,4 +187,7 @@ In 2-inverter mode, only `FeedIn` (`6`) is treated as an active inverter 1 state
 *   **Inverter State Register:** `56` — Inverter state2 as U32.
 *   **Phase Current Registers:** `222` / `232` / `242` — Grid phase currents from smart meter.
 *   **Sensor Type Register:** `1082` — Installed smart meter type.
+*   **KSEM Power Registers:** `40972` / `40974` / `40976` / `40982` / `40984` — Additional KSEM power flow values.
+*   **KSEM SoC Register:** `40986` — KSEM system state of charge.
+*   **KSEM Home Consumption Registers:** `40988` / `40990` / `40992` — Home consumption split by source.
 *   **Session keepalive:** Writes are sent at half the configured inverter timeout interval to prevent session expiry.

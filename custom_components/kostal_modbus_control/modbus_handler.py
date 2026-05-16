@@ -184,6 +184,15 @@ class KostalModbusHandler:
         )
         return result.registers[0]
 
+    async def read_int32(self, address):
+        """Reads a signed 32-bit value from two 16-bit registers using configured word order."""
+        result = await self._run_locked_request(
+            f"read int32 from {address}",
+            lambda: self._safe_read(address, 2),
+        )
+        raw = self._register_words_to_bytes(result.registers[0], result.registers[1])
+        return struct.unpack(">i", raw)[0]
+
     async def read_uint32(self, address):
         """Reads an unsigned 32-bit value from two 16-bit registers using configured word order."""
         result = await self._run_locked_request(

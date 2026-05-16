@@ -63,6 +63,15 @@ from .const import (
     KSEM_SLAVE_ID,
     REG_KSEM_ENERGY_IMPORTED,
     REG_KSEM_ENERGY_EXPORTED,
+    REG_KSEM_GRID_POWER_TOTAL,
+    REG_KSEM_SUM_OUTPUT_INVERTER_AC,
+    REG_KSEM_SUM_PV_POWER_INVERTER_DC,
+    REG_KSEM_HOME_CONSUMPTION,
+    REG_KSEM_BATTERY_CHARGE_DISCHARGE_DC,
+    REG_KSEM_SYSTEM_SOC,
+    REG_KSEM_HOME_CONSUMPTION_FROM_PV,
+    REG_KSEM_HOME_CONSUMPTION_FROM_BATTERY,
+    REG_KSEM_HOME_CONSUMPTION_FROM_GRID,
 )
 from .modbus_handler import KostalModbusHandler
 
@@ -129,9 +138,32 @@ class KostalCoordinator(DataUpdateCoordinator):
                 for reg, label in (
                     (REG_KSEM_ENERGY_IMPORTED, "KSEM energy imported"),
                     (REG_KSEM_ENERGY_EXPORTED, "KSEM energy exported"),
+                    (REG_KSEM_GRID_POWER_TOTAL, "KSEM grid power total"),
+                    (REG_KSEM_SUM_OUTPUT_INVERTER_AC, "KSEM sum output inverter AC"),
+                    (REG_KSEM_SUM_PV_POWER_INVERTER_DC, "KSEM sum PV power inverter DC"),
+                    (REG_KSEM_HOME_CONSUMPTION, "KSEM home consumption"),
+                    (REG_KSEM_BATTERY_CHARGE_DISCHARGE_DC, "KSEM battery charge/discharge DC"),
                 ):
                     try:
-                        data[reg] = await ksem.read_int64(reg)
+                        if reg in (REG_KSEM_ENERGY_IMPORTED, REG_KSEM_ENERGY_EXPORTED):
+                            data[reg] = await ksem.read_int64(reg)
+                        else:
+                            data[reg] = await ksem.read_int32(reg)
+                    except Exception as err:
+                        _LOGGER.debug("Failed to read %s: %s", label, err)
+                        data[reg] = None
+                try:
+                    data[REG_KSEM_SYSTEM_SOC] = await ksem.read_uint16(REG_KSEM_SYSTEM_SOC)
+                except Exception as err:
+                    _LOGGER.debug("Failed to read KSEM system SoC: %s", err)
+                    data[REG_KSEM_SYSTEM_SOC] = None
+                for reg, label in (
+                    (REG_KSEM_HOME_CONSUMPTION_FROM_PV, "KSEM home consumption from PV"),
+                    (REG_KSEM_HOME_CONSUMPTION_FROM_BATTERY, "KSEM home consumption from battery"),
+                    (REG_KSEM_HOME_CONSUMPTION_FROM_GRID, "KSEM home consumption from grid"),
+                ):
+                    try:
+                        data[reg] = await ksem.read_uint32(reg)
                     except Exception as err:
                         _LOGGER.debug("Failed to read %s: %s", label, err)
                         data[reg] = None
