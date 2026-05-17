@@ -101,6 +101,7 @@ from .const import (
     SENSOR_INVERTER_CONTROL_TARGET_POWER,
     SENSOR_INVERTER_CONTROL_TARGET_PERCENT,
     SENSOR_INVERTER_CONTROL_HOUSE_LOAD,
+    SENSOR_COMBINED_SOC,
     BATTERY_TYPE_MAP,
     INVERTER_STATE_MAP,
     SENSOR_INVERTER_STATE,
@@ -218,6 +219,9 @@ async def async_setup_entry(
             KostalInverterControlTargetPercentSensor(data, entry.entry_id),
             KostalInverterControlHouseLoadSensor(data, entry.entry_id),
         ])
+
+    if entry.data.get(CONF_OPERATING_MODE) == OPERATING_MODE_HA_INVERTER_CONTROL:
+        entities.append(KostalCombinedSoCSensor(coordinator, data, entry.entry_id))
 
     async_add_entities(entities)
 
@@ -752,6 +756,60 @@ class KostalInverterControlHouseLoadSensor(KostalInverterControlBaseSensor):
     @property
     def native_value(self) -> float | None:
         return self._data.inverter_control_house_load_w
+
+
+class KostalCombinedSoCSensor(CoordinatorEntity, SensorEntity):
+    """Sensor that shows the average SOC of both inverter batteries."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Combined Battery SoC"
+    _attr_device_class = SensorDeviceClass.BATTERY
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator: KostalCoordinator, data, entry_id: str) -> None:
+        super().__init__(coordinator)
+        self._data = data
+        self._entry_id = entry_id
+        self._attr_unique_id = f"{entry_id}_{SENSOR_COMBINED_SOC}"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(identifiers={(DOMAIN, self._entry_id)})
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if self._data.source_soc1_entity:
+            self.async_on_remove(
+                async_track_state_change_event(
+                    self.hass,
+                    [self._data.source_soc1_entity],
+                    self._handle_soc1_change,
+                )
+            )
+
+    @callback
+    def _handle_soc1_change(self, event) -> None:
+        self.async_write_ha_state()
+
+    @property
+    def native_value(self) -> float | None:
+        if self.coordinator.data is None:
+            return None
+        soc2 = self.coordinator.data.get(REG_BATTERY_SOC)
+        if soc2 is None:
+            return None
+        soc1_entity = self._data.source_soc1_entity
+        if not soc1_entity:
+            return None
+        state = self.hass.states.get(soc1_entity)
+        if state is None or state.state in ("unavailable", "unknown", ""):
+            return None
+        try:
+            soc1 = float(state.state)
+        except ValueError:
+            return None
+        return round((soc1 + soc2) / 2.0, 1)
 
 
 class KostalBatteryWorkCapacitySensor(KostalBaseSensor):

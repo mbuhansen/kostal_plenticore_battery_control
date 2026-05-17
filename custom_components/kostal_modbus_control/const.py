@@ -188,6 +188,7 @@ SENSOR_INVERTER_CONTROL_STATUS = "inverter_control_status"
 SENSOR_INVERTER_CONTROL_TARGET_POWER = "inverter_control_target_power"
 SENSOR_INVERTER_CONTROL_TARGET_PERCENT = "inverter_control_target_percent"
 SENSOR_INVERTER_CONTROL_HOUSE_LOAD = "inverter_control_house_load"
+SENSOR_COMBINED_SOC = "combined_soc"
 
 # KSEM (KOSTAL Smart Energy Meter) Modbus configuration
 CONF_KSEM_HOST = "ksem_host"
