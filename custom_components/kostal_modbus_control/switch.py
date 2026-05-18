@@ -145,8 +145,16 @@ class KostalBaseSwitch(SwitchEntity):
         self._resume_pending = False
         
         # Calculate derived timings
-        # Loop interval = Inverter Timeout / 2 (send twice per timeout period)
-        self._loop_interval = max(int(self._data.inverter_timeout / 2), 5)
+        # In HA control modes we use a fixed 5s loop for faster control response.
+        # In normal mode we keep the timeout-based keepalive pacing.
+        if self._data.operating_mode in {
+            OPERATING_MODE_HA_INVERTER_CONTROL,
+            OPERATING_MODE_EXTERNAL_GRID_CONTROL,
+        }:
+            self._loop_interval = 5
+        else:
+            # Loop interval = Inverter Timeout / 2 (send twice per timeout period)
+            self._loop_interval = max(int(self._data.inverter_timeout / 2), 5)
         # Wait time = Inverter Timeout + X (e.g., 15s safety buffer)
         self._wait_time_before_start = self._data.inverter_timeout + 15.0
         self._action_timeout = max(self._wait_time_before_start, 30.0)
@@ -1333,39 +1341,50 @@ class KostalInverterControlSwitch(KostalBaseSwitch):
             return "discharge"
         return "idle"
 
-    def _discharge_target_watts(self, limit_watts: float) -> float | None:
+    def _discharge_target_watts(self, limit_watts: float, force_discharge: bool = False) -> float | None:
         inputs = self._control_inputs()
         if inputs is None:
             return None
-
-        house_load = max(0.0, inputs["house_load"])
-        if house_load <= 0.0:
-            return 0.0
 
         discharge_limit = min(limit_watts, self._max_discharge_watts())
         if discharge_limit <= 0.0:
             return 0.0
 
-        # If inverter 1 is unavailable, inverter 2 should behave like the only
-        # active inverter and follow the grid point directly.
-        if inputs.get("inv1_active") is False:
-            return min(house_load, discharge_limit)
-
-        if inputs["soc2"] > self._data.inv2_min_soc:
-            return min(house_load, discharge_limit)
-
-        if inputs["soc1"] > self._data.inv1_soc_buffer:
-            return 0.0
-
+        # Guard: inverter 2 battery must be above minimum SOC
         soc2_headroom = max(0.0, inputs["soc2"] - self._data.inv2_min_soc)
-        soc1_headroom = max(0.0, inputs["soc1"] - self._data.inv1_soc_buffer)
-        inv2_available = (soc2_headroom / 100.0) * discharge_limit
-        inv1_available = (soc1_headroom / 100.0) * max(self._data.inv1_max_power_w, 0.0)
-        total_available = inv2_available + inv1_available
-        if total_available <= 0.0 or inv2_available <= 0.0:
+        if soc2_headroom <= 0.0:
             return 0.0
 
-        share2 = inv2_available / total_available
+        # If inverter 1 is unavailable, inverter 2 handles everything alone.
+        if inputs.get("inv1_active") is False:
+            if force_discharge:
+                return discharge_limit
+            house_load = max(0.0, inputs["house_load"])
+            return min(house_load, discharge_limit)
+
+        # Force discharge: run inverter 2 at the full configured limit,
+        # mirroring inverter 1 which is already running at its limit.
+        if force_discharge:
+            return discharge_limit
+
+        # Idle assist: share house_load between both inverters.
+        # The inverter with the lower max power gets the larger share so that
+        # its battery depletes first.
+        house_load = max(0.0, inputs["house_load"])
+        if house_load <= 0.0:
+            return 0.0
+
+        soc1_headroom = max(0.0, inputs["soc1"] - self._data.inv1_soc_buffer)
+        if soc1_headroom <= 0.0:
+            # Inverter 1 battery is at buffer limit; inverter 2 covers all.
+            return min(house_load, discharge_limit)
+
+        # share2 = inv1_max / (inv1_max + inv2_max)
+        # When inv1_max > inv2_max (inv2 is the smaller inverter),
+        # inv2 receives the larger fraction and its battery depletes first.
+        inv1_max = max(self._data.inv1_max_power_w, 1.0)
+        inv2_max = max(discharge_limit, 1.0)
+        share2 = inv1_max / (inv1_max + inv2_max)
         return min(house_load * share2, discharge_limit)
 
     def _charge_target_watts(self, limit_watts: float, force_charge: bool) -> float | None:
@@ -1400,7 +1419,7 @@ class KostalInverterControlSwitch(KostalBaseSwitch):
         if mode == "charge":
             return self._charge_target_watts(self._data.active_max_power_w, force_charge=True)
         if mode == "discharge":
-            return self._discharge_target_watts(self._data.active_max_power_w)
+            return self._discharge_target_watts(self._data.active_max_power_w, force_discharge=True)
         return None
 
     def _external_grid_target_watts(self, inputs: dict[str, float] | None) -> tuple[float | None, float | None, str]:

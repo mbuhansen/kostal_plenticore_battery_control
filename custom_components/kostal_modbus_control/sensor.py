@@ -78,7 +78,6 @@ from .const import (
     SENSOR_CURRENT_PHASE3,
     SENSOR_SENSOR_TYPE,
     SENSOR_INVERTER_STATE,
-    SENSOR_INVERTER_STATE_RAW,
     SENSOR_EMS_STATUS,
     SENSOR_EMS_CHARGE_LIMIT,
     SENSOR_PREDBAT_STATUS,
@@ -167,7 +166,6 @@ async def async_setup_entry(
         KostalCurrentPhase3Sensor(coordinator, entry.entry_id),
         KostalSensorTypeSensor(coordinator, entry.entry_id),
         KostalInverterStateSensor(coordinator, entry.entry_id),
-        KostalInverterStateRawSensor(coordinator, entry.entry_id),
         KostalEMSStatusSensor(data, entry.entry_id),
         KostalEMSChargeLimitSensor(data, entry.entry_id),
         KostalPredbatStatusSensor(data, entry.entry_id),
@@ -460,22 +458,6 @@ class KostalInverterStateSensor(KostalBaseSensor):
         if val is None:
             return None
         return INVERTER_STATE_MAP.get(val, "Unknown Raw")
-
-
-class KostalInverterStateRawSensor(KostalBaseSensor):
-    _key = SENSOR_INVERTER_STATE_RAW
-    _name = "Inverter State Raw"
-    _address = REG_INVERTER_STATE2
-    _attr_device_class = None
-    _attr_native_unit_of_measurement = None
-    _attr_state_class = None
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-
-    @property
-    def native_value(self):
-        if self.coordinator.data is None:
-            return None
-        return self.coordinator.data.get(self._address)
 
 
 class KostalEMSStatusSensor(SensorEntity):

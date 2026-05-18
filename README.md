@@ -12,7 +12,7 @@ This custom integration allows for advanced Battery control of Kostal Plenticore
 *   **2-Inverter Assist Logic:** In HA Inverter Grid Control mode, inverter 2 can share load based on inverter 1 SoC, battery power, and grid point data.
 *   **Grid Fallback:** If inverter 1 is not in `FeedIn` state, inverter 2 can fall back to controlling from the grid point instead of waiting for inverter 1 power to recover.
 *   **Smart Meter Detection:** EMS Protection can only be enabled when a supported smart meter is connected.
-*   **Status Monitoring:** Provides sensors for Battery SoC, Power, Voltage, Temperature, Dynamic Limits, Grid Phase Currents, Smart Meter Type, Inverter State, and Inverter State Raw.
+*   **Status Monitoring:** Provides sensors for Battery SoC, Power, Voltage, Temperature, Dynamic Limits, Grid Phase Currents, Smart Meter Type, and Inverter State.
 *   **Configurable Rates:** Set your desired Charge/Discharge wattage directly from Home Assistant.
 
 ## Prerequisites & Inverter Settings
@@ -59,6 +59,75 @@ In **HA Inverter Grid Control (2 inverter)** mode:
 *   `Source inverter 1 status entity` is optional, but recommended. The best source is inverter 1's own `Inverter State` sensor from this integration.
 *   Inverter 1 is only treated as active when its state is `FeedIn` (Modbus state `6`).
 *   If inverter 1 leaves `FeedIn`, inverter 2 enters **Grid Fallback** and follows the grid point directly until inverter 1 returns to `FeedIn`.
+
+### Control Tuning (Hysteresis)
+
+The integration includes several hysteresis settings to avoid rapid power oscillation and unnecessary Modbus writes.
+
+*   **External control hysteresis (W)**
+    *   Used in **Single Inverter Grid Control** mode.
+    *   Compares the newly calculated grid-support setpoint with the previous setpoint.
+    *   A new value is only applied when the change exceeds this threshold.
+    *   Higher value = fewer adjustments and smoother behavior, but slower reaction.
+*   **Active mirrored hysteresis (W)**
+    *   Used in **HA Inverter Grid Control (2 inverter)** mode when control is actively in `Charge` or `Discharge`.
+    *   Prevents frequent small setpoint changes while following mirror/assist logic.
+    *   Lower value = faster and tighter tracking, but potentially more frequent write updates.
+*   **Idle assist hysteresis (W)**
+    *   Used in **HA Inverter Grid Control (2 inverter)** mode while status is `Idle Assist`.
+    *   Applies the same anti-chatter principle, but for idle balancing behavior.
+    *   Higher value = calmer idle regulation with fewer small corrections.
+
+Practical guidance:
+
+*   If power jumps too often, increase the relevant hysteresis.
+*   If control feels too slow to react, reduce the relevant hysteresis.
+*   Tune one setting at a time and observe `Inverter Control Status` together with the resulting battery power.
+
+### 2-Inverter Tuning Options (All Key Fields)
+
+In **HA Inverter Grid Control (2 inverter)** mode, these settings define how inverter 2 assists inverter 1 and the grid point:
+
+*   **Inverter 2 minimum SOC (%)**
+    *   Lower SOC limit for inverter 2 in assist logic.
+    *   Above this value, inverter 2 participates in shared discharge.
+    *   At/below this value, inverter 2 discharge assist is reduced to protect SOC reserve.
+
+*   **Inverter 1 SOC buffer (%)**
+    *   SOC threshold used as reserve protection for inverter 1 when inverter 2 is near minimum SOC.
+    *   Higher value keeps more reserve on inverter 1 before its share in discharge support becomes significant.
+
+During shared discharge, the integration dynamically biases the inverter with the lower currently available discharge capacity so it can deplete first.
+
+*   **Inverter 1 max power (W)**
+    *   Estimated available inverter 1 power used in load-sharing calculations.
+    *   This is not written to inverter 1; it is a modeling value for proportional split logic.
+    *   Set this close to realistic inverter 1 battery power capability for best balancing.
+
+*   **Active mirrored max power (W)**
+    *   Maximum absolute assist power used when mirrored control is active (`Charge` or `Discharge`).
+    *   Acts as a cap before conversion to battery percent setpoint.
+    *   Higher value allows stronger response in active mirrored mode.
+
+*   **Active mirrored hysteresis (W)**
+    *   Hysteresis threshold while in active mirrored mode (`Charge` / `Discharge`).
+    *   Reduces micro-adjustments and write chatter in active control.
+
+*   **Idle assist max power (W)**
+    *   Maximum absolute assist power while status is `Idle Assist`.
+    *   Caps how much inverter 2 is allowed to charge/discharge when no forced mirror direction is active.
+    *   A lower value gives gentler background balancing.
+
+*   **Idle assist hysteresis (W)**
+    *   Hysteresis threshold while in `Idle Assist`.
+    *   Prevents frequent tiny setpoint changes around neutral operation.
+
+Recommended tuning order:
+
+1. Set realistic `Inverter 1 max power (W)`.
+2. Set safety limits: `Inverter 2 minimum SOC (%)` and `Inverter 1 SOC buffer (%)`.
+3. Tune response strength with `Active mirrored max power (W)` and `Idle assist max power (W)`.
+4. Tune smoothness with `Active mirrored hysteresis (W)` and `Idle assist hysteresis (W)`.
 
 ## Entities Explained
 
@@ -116,7 +185,6 @@ The EMS (Energy Management System) switch protects your house fuses during force
 | Grid Current Phase 3 | A | Phase 3 current at grid connection point |
 | Smart Meter Type | — | Detected smart meter model or "No sensor" |
 | Inverter State | — | Current inverter state mapped from Modbus register 56 |
-| Inverter State Raw | — | Raw numeric inverter state from Modbus register 56 |
 | EMS Grid Protection Status | — | Current state of the EMS Grid Protection function |
 | Inverter Control Status | — | Current automatic control mode, including `Grid Fallback` when inverter 1 is not in `FeedIn` |
 
