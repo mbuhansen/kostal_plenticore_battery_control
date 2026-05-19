@@ -360,6 +360,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     ksem_host = entry.data.get(CONF_KSEM_HOST, "").strip()
     if ksem_host:
         ksem_handler = KostalModbusHandler(ksem_host, KSEM_PORT, KSEM_SLAVE_ID)
+        # KSEM always uses big-endian word order (ABCD) — no word swap
+        ksem_handler._word_swapped_32bit = False
         try:
             await ksem_handler.connect()
             _LOGGER.info("Connected to KSEM at %s:%s", ksem_host, KSEM_PORT)
