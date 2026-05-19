@@ -1102,7 +1102,7 @@ class KostalEMSSwitch(KostalBaseSwitch, RestoreEntity):
         # EMS does NOT write to Modbus — nothing is written unless a charge switch is active
 
 
-class KostalInverterControlSwitch(KostalBaseSwitch):
+class KostalInverterControlSwitch(KostalBaseSwitch, RestoreEntity):
     _key = SWITCH_INVERTER_CONTROL
     _name = "Inverter Control"
     _auto_resume_on_recovery = True
@@ -1135,6 +1135,17 @@ class KostalInverterControlSwitch(KostalBaseSwitch):
                 inv1_status_state,
             )
         async_dispatcher_send(self.hass, f"{SIGNAL_INVERTER_CONTROL_UPDATED}_{self._entry_id}")
+
+    async def async_added_to_hass(self) -> None:
+        """Restore inverter control state after HA restart."""
+        last = await self.async_get_last_state()
+        if last is not None:
+            self._attr_is_on = last.state == "on"
+
+        if self._attr_is_on:
+            self._schedule_start_loop("state restore")
+
+        self.async_write_ha_state()
 
     def _control_inputs(self) -> dict[str, float] | None:
         if self._operating_mode() == OPERATING_MODE_EXTERNAL_GRID_CONTROL:
