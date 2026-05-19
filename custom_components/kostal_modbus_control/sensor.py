@@ -553,6 +553,27 @@ class KostalPredbatStatusSensor(SensorEntity):
         self._attr_unique_id = f"{entry_id}_{SENSOR_PREDBAT_STATUS}"
         self._attr_name = "Predbat Status"
 
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(identifiers={(DOMAIN, self._entry_id)})
+
+    @property
+    def native_value(self) -> str:
+        return self._data.predbat_status
+
+    async def async_added_to_hass(self) -> None:
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass,
+                f"{SIGNAL_PREDBAT_STATUS_UPDATED}_{self._entry_id}",
+                self._handle_status_update,
+            )
+        )
+
+    @callback
+    def _handle_status_update(self, status: str) -> None:
+        self.async_write_ha_state()
+
 
 class KostalInverterControlBaseSensor(SensorEntity):
     _attr_has_entity_name = True
