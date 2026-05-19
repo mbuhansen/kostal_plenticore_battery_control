@@ -1396,8 +1396,10 @@ class KostalInverterControlSwitch(KostalBaseSwitch):
         if charge_limit <= 0.0:
             return 0.0
 
-        export_surplus = max(0.0, -inputs["house_load"])
-        if export_surplus > 0.0:
+        # Use the actual grid point for surplus detection so battery charging
+        # does not feed back into the trigger signal.
+        export_surplus = max(0.0, -inputs["grid_power"])
+        if export_surplus > 50.0:
             return -min(export_surplus, charge_limit)
 
         if force_charge:
