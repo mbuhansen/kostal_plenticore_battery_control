@@ -12,7 +12,8 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.dispatcher import async_dispatcher_send
-from homeassistant.helpers.entity import DeviceInfo, EntityCategory
+from homeassistant.const import EntityCategory
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import (
@@ -115,6 +116,8 @@ async def async_setup_entry(
 class KostalBaseSwitch(SwitchEntity):
     """Base class for Kostal switches."""
 
+    _key: str
+    _name: str
     _attr_has_entity_name = True
     _attr_should_poll = False
     _auto_resume_on_recovery = False
@@ -179,7 +182,7 @@ class KostalBaseSwitch(SwitchEntity):
         _write_activity_entry(
             self.hass,
             getattr(self, "entity_id", None),
-            self.name,
+            str(self.name),
             message,
         )
 
@@ -756,6 +759,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
             )
             self._set_predbat_status("Waiting")
             return
+        assert soc is not None and hold_limit is not None
 
         if self._predbat_car_hold_active():
             _LOGGER.debug(
