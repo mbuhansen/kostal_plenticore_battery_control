@@ -45,8 +45,8 @@ from .const import (
     SWITCH_IO_OUTPUT_1,
     PREDBAT_MODE_ENTITY,
     PREDBAT_ACTIVE_MODES,
-    PREDBAT_LOW_POWER_LOOP_INTERVAL,
-    PREDBAT_LOW_POWER_BOOST_ALPHA,
+    PREDBAT_LOW_POWER_EXPORT_THRESHOLD_WATTS,
+    PREDBAT_LOW_POWER_SUSPEND_DELAY_SECONDS,
     SWITCH_IO_OUTPUT_2,
     SWITCH_IO_OUTPUT_3,
     SWITCH_IO_OUTPUT_4,
@@ -140,7 +140,6 @@ class KostalBaseSwitch(SwitchEntity):
         # Calculate derived timings
         # Loop interval = Inverter Timeout / 2 (send twice per timeout period)
         self._loop_interval = max(int(self._data.inverter_timeout / 2), 5)
-        self._active_loop_interval = self._loop_interval
         # Wait time = Inverter Timeout + X (e.g., 15s safety buffer)
         self._wait_time_before_start = self._data.inverter_timeout + 15.0
         self._action_timeout = max(self._wait_time_before_start, 30.0)
@@ -197,16 +196,10 @@ class KostalBaseSwitch(SwitchEntity):
             self._set_resume_pending(False)
         self.async_write_ha_state()
 
-    def _desired_loop_interval(self) -> int:
-        """Hook for subclasses that need a shorter interval in certain states."""
-        return self._loop_interval
-
     def _start_periodic_loop(self) -> None:
         self._cancel_loop_timer()
-        interval = self._desired_loop_interval()
-        self._active_loop_interval = interval
         self._remove_timer = async_track_time_interval(
-            self.hass, self._async_handle_loop_tick, timedelta(seconds=interval)
+            self.hass, self._async_handle_loop_tick, timedelta(seconds=self._loop_interval)
         )
         self._mark_loop_running()
 
@@ -306,8 +299,6 @@ class KostalBaseSwitch(SwitchEntity):
         if not self._attr_is_on:
             return
         await self._run_guarded_action(self._loop_action, "periodic loop", *args)
-        if self._attr_is_on and self._desired_loop_interval() != self._active_loop_interval:
-            self._start_periodic_loop()
 
     async def _run_stop_action(self) -> None:
         try:
@@ -508,15 +499,8 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         self._predbat_startup_block_until: float | None = None
         self._predbat_discharge_blocked: bool = False
         self._predbat_low_power_capping: bool = False
-        self._predbat_low_power_boost_watts: float = 0.0
-
-    def _desired_loop_interval(self) -> int:
-        """Tick faster while Predbat low-power charging is active so the
-        grid-export boost can react to PV surplus without waiting for the
-        normal (inverter-timeout-derived) interval."""
-        if self._is_predbat_active() and self._is_predbat_low_power_active():
-            return min(self._loop_interval, PREDBAT_LOW_POWER_LOOP_INTERVAL)
-        return self._loop_interval
+        self._predbat_low_power_suspended: bool = False
+        self._predbat_low_power_export_since: float | None = None
 
     def _is_predbat_active(self) -> bool:
         """Return True when select.predbat_mode exists and is in an active control mode."""
@@ -556,31 +540,14 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
             return False
         return state.state == "on"
 
-    async def _predbat_low_power_charge_pct(self) -> float | None:
-        """Return the Predbat low power charge rate as a percentage of max charge capacity.
-
-        Reads input_number.predbat_charge_rate (Watts) and converts it to a
-        percentage using the battery's maximum charge power. Returns None when
-        low power mode is inactive, when the entity is unavailable, or when the
-        battery maximum charge limit is unknown.
-
-        If the grid connection point is currently exporting (negative
-        REG_TOTAL_ACTIVE_POWER), the target rate is boosted so the battery
-        absorbs the PV surplus instead of it being exported. The boost is
-        smoothed with an EMA (same pattern as KostalEMSSwitch's
-        _ems_smoothed_limit) so it ramps gradually instead of snapping fully
-        on/off every tick, which would otherwise self-oscillate.
-        """
-        if not self._is_predbat_low_power_active():
-            self._predbat_low_power_boost_watts = 0.0
-            return None
-
+    def _predbat_low_power_rate_watts(self) -> float | None:
+        """Return input_number.predbat_charge_rate parsed as Watts, or None."""
         rate_state = self.hass.states.get("input_number.predbat_charge_rate")
         if rate_state is None:
             _LOGGER.warning("Predbat low power: input_number.predbat_charge_rate not found")
             return None
         try:
-            rate_watts = float(rate_state.state)
+            return float(rate_state.state)
         except (ValueError, TypeError):
             _LOGGER.warning(
                 "Predbat low power: input_number.predbat_charge_rate has non-numeric state '%s'",
@@ -588,40 +555,86 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
             )
             return None
 
+    def _predbat_low_power_charge_pct(self) -> float | None:
+        """Return the Predbat low power charge rate as a percentage of max charge capacity.
+
+        Reads input_number.predbat_charge_rate (Watts) and converts it to a
+        percentage using the battery's maximum charge power. Returns None when
+        low power mode is inactive, when the entity is unavailable, or when the
+        battery maximum charge limit is unknown.
+        """
+        if not self._is_predbat_low_power_active():
+            return None
+
+        rate_watts = self._predbat_low_power_rate_watts()
+        if rate_watts is None:
+            return None
+
         max_charge_watts = self._max_charge_watts()
         if max_charge_watts <= 0.0:
             _LOGGER.warning("Predbat low power: max charge limit unavailable, cannot convert to %%")
             return None
 
-        coordinator = self._data.coordinator
-        if coordinator is not None:
-            # Pull a fresh grid-point reading so the boost reacts within this
-            # (shortened) loop interval rather than the coordinator's own 15s cycle.
-            await coordinator.async_request_refresh()
+        return min(100.0, (rate_watts / max_charge_watts) * 100.0)
 
+    def _predbat_low_power_export_suspend_check(self) -> bool:
+        """Suspend/resume the low-power charge setpoint writes based on grid export.
+
+        While the low-power charge rate is capping the charge target, sustained
+        grid export means the inverter's own internal control (once the
+        register 1034 write stops refreshing) will drive the grid point to 0
+        faster than this integration's own loop can. When export has stayed
+        at or below -PREDBAT_LOW_POWER_EXPORT_THRESHOLD_WATTS for
+        PREDBAT_LOW_POWER_SUSPEND_DELAY_SECONDS, stop writing. Once suspended,
+        resume immediately (no delay) as soon as battery charging power drops
+        below the low-power setpoint, e.g. because PV production fades.
+
+        Returns True when this tick's write should be skipped (still
+        suspended), False when the write should proceed as normal.
+        """
+        coordinator = self._data.coordinator
         grid_power = None
+        battery_power = None
         if coordinator is not None and coordinator.data is not None:
             grid_power = coordinator.data.get(REG_TOTAL_ACTIVE_POWER)
+            battery_power = coordinator.data.get(REG_BATTERY_POWER)
 
-        if grid_power is not None:
-            # Only export (negative grid point) creates a boost need. Import
-            # pulls the boost back down toward 0 — never below Predbat's own rate.
-            desired_boost_now = max(0.0, -grid_power)
-            self._predbat_low_power_boost_watts = (
-                PREDBAT_LOW_POWER_BOOST_ALPHA * desired_boost_now
-                + (1 - PREDBAT_LOW_POWER_BOOST_ALPHA) * self._predbat_low_power_boost_watts
-            )
+        if self._predbat_low_power_suspended:
+            rate_watts = self._predbat_low_power_rate_watts() or 0.0
+            charging_watts = -battery_power if battery_power is not None and battery_power < 0 else 0.0
+            if battery_power is not None and charging_watts >= rate_watts:
+                # Inverter is still meeting the low-power target from PV alone.
+                return True
 
-        if self._predbat_low_power_boost_watts > 1.0:
-            _LOGGER.debug(
-                "Predbat low power: grid export detected — smoothed boost %.0fW (rate %.0fW -> %.0fW)",
-                self._predbat_low_power_boost_watts,
+            _LOGGER.info(
+                "Predbat low power: charging power %.0fW below setpoint %.0fW — resuming charge setpoint writes",
+                charging_watts,
                 rate_watts,
-                rate_watts + self._predbat_low_power_boost_watts,
             )
+            self._write_activity("Predbat low power: resuming charge setpoint (charging below target)")
+            self._predbat_low_power_suspended = False
+            self._predbat_low_power_export_since = None
+            return False
 
-        rate_watts += self._predbat_low_power_boost_watts
-        return min(100.0, (rate_watts / max_charge_watts) * 100.0)
+        if grid_power is not None and grid_power <= -PREDBAT_LOW_POWER_EXPORT_THRESHOLD_WATTS:
+            if self._predbat_low_power_export_since is None:
+                self._predbat_low_power_export_since = time.time()
+            elif time.time() - self._predbat_low_power_export_since >= PREDBAT_LOW_POWER_SUSPEND_DELAY_SECONDS:
+                _LOGGER.info(
+                    "Predbat low power: grid export >= %.0fW for %.0fs — suspending charge setpoint writes",
+                    PREDBAT_LOW_POWER_EXPORT_THRESHOLD_WATTS,
+                    PREDBAT_LOW_POWER_SUSPEND_DELAY_SECONDS,
+                )
+                self._write_activity(
+                    "Predbat low power: pausing charge setpoint — inverter self-regulating to 0 export"
+                )
+                self._predbat_low_power_suspended = True
+                self._predbat_low_power_export_since = None
+                return True
+        else:
+            self._predbat_low_power_export_since = None
+
+        return False
 
     def _predbat_limit_decision(
         self,
@@ -824,7 +837,8 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
             should_charge_now = False
 
         if should_charge_now:
-            self._set_predbat_status("Charge")
+            if not self._predbat_low_power_suspended:
+                self._set_predbat_status("Charge")
             if self._predbat_was_charging is not True:
                 _LOGGER.info(
                     "Predbat Control: SOC=%.1f%% <= charge_start_limit=%.1f%% — charging",
@@ -839,7 +853,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
             charge_pct = abs(self._data.charge_rate)
             if self._data.ems_status != "Inactive":
                 charge_pct = min(charge_pct, self._data.ems_charge_limit_pct)
-            low_power_pct = await self._predbat_low_power_charge_pct()
+            low_power_pct = self._predbat_low_power_charge_pct()
             if low_power_pct is not None and low_power_pct < charge_pct:
                 if not self._predbat_low_power_capping:
                     _LOGGER.info(
@@ -852,11 +866,19 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                     )
                     self._predbat_low_power_capping = True
                 charge_pct = low_power_pct
+
+                if self._predbat_low_power_export_suspend_check():
+                    self._set_predbat_status("Low Power Suspended")
+                    return
+                self._set_predbat_status("Charge")
             else:
                 if self._predbat_low_power_capping:
                     _LOGGER.info("Predbat low power: charge rate cap released")
                     self._write_activity("Predbat low power: charge rate cap released")
                 self._predbat_low_power_capping = False
+                self._predbat_low_power_suspended = False
+                self._predbat_low_power_export_since = None
+                self._set_predbat_status("Charge")
             if not self._attr_is_on:
                 return
             if self._predbat_startup_write_blocked():
@@ -868,6 +890,9 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
             # 1028 was never written in this session — no transition wait needed
             self._predbat_was_charging = False
             self._predbat_transition_time = None
+
+        self._predbat_low_power_suspended = False
+        self._predbat_low_power_export_since = None
 
         # Not charging
         if self._predbat_was_charging is True:
@@ -950,14 +975,16 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         self._predbat_transition_time = None
         self._predbat_startup_block_until = None
         self._predbat_low_power_capping = False
-        self._predbat_low_power_boost_watts = 0.0
+        self._predbat_low_power_suspended = False
+        self._predbat_low_power_export_since = None
         # Close the Modbus connection so the inverter sees a clean disconnect.
         # It will reconnect automatically on the next read/write.
         await self._data.handler.close()
 
     def _on_communication_fault(self) -> None:
         self._set_predbat_status("Inactive")
-        self._predbat_low_power_boost_watts = 0.0
+        self._predbat_low_power_suspended = False
+        self._predbat_low_power_export_since = None
 
 class KostalDischargeStartSwitch(KostalBaseSwitch):
     _key = SWITCH_DISCHARGE_START

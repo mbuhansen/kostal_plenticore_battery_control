@@ -191,14 +191,13 @@ PREDBAT_ACTIVE_MODES = frozenset({
 PREDBAT_CHARGE_START_DELTA = 1.0
 PREDBAT_HOLD_DELTA = 1.0
 
-# Faster loop interval used while Predbat low-power charging is active, so the
-# grid-export boost (see _predbat_low_power_charge_pct) reacts quickly to PV
-# surplus instead of waiting for the normal (inverter-timeout-derived) interval.
-PREDBAT_LOW_POWER_LOOP_INTERVAL = 5
-
-# EMA smoothing factor for the low-power grid-export boost. Mirrors EMS's own
-# EMA_ALPHA to avoid the boost snapping fully on/off every tick (self-oscillation).
-PREDBAT_LOW_POWER_BOOST_ALPHA = 0.3
+# Grid connection point export threshold (Watts) that must be sustained for
+# PREDBAT_LOW_POWER_SUSPEND_DELAY_SECONDS before the low-power charge loop
+# stops writing the charge setpoint, letting the inverter's own timeout on
+# register 1034 expire and fall back to internal 0-export self-consumption
+# control (which reacts faster than this integration's own loop).
+PREDBAT_LOW_POWER_EXPORT_THRESHOLD_WATTS = 100.0
+PREDBAT_LOW_POWER_SUSPEND_DELAY_SECONDS = 60.0
 
 # Entity descriptions (Switches)
 SWITCH_CHARGE_START = "charge_start"

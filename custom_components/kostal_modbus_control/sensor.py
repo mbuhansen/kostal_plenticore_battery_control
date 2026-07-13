@@ -503,7 +503,7 @@ class KostalPredbatStatusSensor(SensorEntity):
     _attr_has_entity_name = True
     _attr_should_poll = False
     _attr_device_class = SensorDeviceClass.ENUM
-    _attr_options = ["Inactive", "Waiting", "Charge", "Hold", "Hold for car"]
+    _attr_options = ["Inactive", "Waiting", "Charge", "Hold", "Hold for car", "Low Power Suspended"]
     _attr_icon = "mdi:home-battery"
 
     def __init__(self, data, entry_id: str) -> None:
