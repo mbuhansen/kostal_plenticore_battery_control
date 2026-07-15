@@ -199,6 +199,15 @@ PREDBAT_HOLD_DELTA = 1.0
 PREDBAT_LOW_POWER_EXPORT_THRESHOLD_WATTS = 100.0
 PREDBAT_LOW_POWER_SUSPEND_DELAY_SECONDS = 60.0
 
+# Tolerance fraction subtracted from the low-power setpoint before comparing
+# against measured battery charging power to decide whether to resume writes.
+# Measured battery power runs a few percent below the commanded AC-side
+# setpoint even when the inverter is fully meeting it (charge conversion /
+# round-trip loss), so the comparison must be relative to the setpoint size,
+# not a fixed Watt margin, or it would always look "below target" and resume
+# immediately after every suspend.
+PREDBAT_LOW_POWER_RESUME_TOLERANCE_FRACTION = 0.15
+
 # Entity descriptions (Switches)
 SWITCH_CHARGE_START = "charge_start"
 SWITCH_DISCHARGE_START = "discharge_start"

@@ -47,6 +47,7 @@ from .const import (
     PREDBAT_ACTIVE_MODES,
     PREDBAT_LOW_POWER_EXPORT_THRESHOLD_WATTS,
     PREDBAT_LOW_POWER_SUSPEND_DELAY_SECONDS,
+    PREDBAT_LOW_POWER_RESUME_TOLERANCE_FRACTION,
     SWITCH_IO_OUTPUT_2,
     SWITCH_IO_OUTPUT_3,
     SWITCH_IO_OUTPUT_4,
@@ -586,8 +587,10 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         faster than this integration's own loop can. When export has stayed
         at or below -PREDBAT_LOW_POWER_EXPORT_THRESHOLD_WATTS for
         PREDBAT_LOW_POWER_SUSPEND_DELAY_SECONDS, stop writing. Once suspended,
-        resume immediately (no delay) as soon as battery charging power drops
-        below the low-power setpoint, e.g. because PV production fades.
+        resume immediately (no delay, but with a tolerance — see
+        PREDBAT_LOW_POWER_RESUME_TOLERANCE_FRACTION) as soon as battery
+        charging power drops meaningfully below the low-power setpoint, e.g.
+        because PV production fades.
 
         Returns True when this tick's write should be skipped (still
         suspended), False when the write should proceed as normal.
@@ -600,16 +603,24 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
             battery_power = coordinator.data.get(REG_BATTERY_POWER)
 
         if self._predbat_low_power_suspended:
+            if battery_power is None:
+                # No fresh reading this tick — stay suspended rather than
+                # treating missing data as a reason to resume.
+                return True
+
             rate_watts = self._predbat_low_power_rate_watts() or 0.0
-            charging_watts = -battery_power if battery_power is not None and battery_power < 0 else 0.0
-            if battery_power is not None and charging_watts >= rate_watts:
-                # Inverter is still meeting the low-power target from PV alone.
+            charging_watts = -battery_power if battery_power < 0 else 0.0
+            resume_threshold_watts = rate_watts * (1 - PREDBAT_LOW_POWER_RESUME_TOLERANCE_FRACTION)
+            if charging_watts >= resume_threshold_watts:
+                # Inverter is still meeting the low-power target (within
+                # tolerance) from PV alone.
                 return True
 
             _LOGGER.info(
-                "Predbat low power: charging power %.0fW below setpoint %.0fW — resuming charge setpoint writes",
+                "Predbat low power: charging power %.0fW below setpoint %.0fW (tolerance %.0f%%) — resuming charge setpoint writes",
                 charging_watts,
                 rate_watts,
+                PREDBAT_LOW_POWER_RESUME_TOLERANCE_FRACTION * 100,
             )
             self._write_activity("Predbat low power: resuming charge setpoint (charging below target)")
             self._predbat_low_power_suspended = False
