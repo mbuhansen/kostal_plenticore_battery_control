@@ -197,7 +197,7 @@ PREDBAT_HOLD_DELTA = 1.0
 # register 1034 expire and fall back to internal 0-export self-consumption
 # control (which reacts faster than this integration's own loop).
 PREDBAT_LOW_POWER_EXPORT_THRESHOLD_WATTS = 100.0
-PREDBAT_LOW_POWER_SUSPEND_DELAY_SECONDS = 60.0
+PREDBAT_LOW_POWER_SUSPEND_DELAY_SECONDS = 30.0
 
 # Tolerance fraction subtracted from the low-power setpoint before comparing
 # against measured battery charging power to decide whether to resume writes.
