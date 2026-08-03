@@ -42,6 +42,10 @@ REG_BATTERY_VOLTAGE = 216         # Battery Voltage (V) - Float (0xD8)
 REG_BATTERY_CURRENT = 200         # Actual battery charge (-) / discharge (+) current (A) - Float (0xC8)
 REG_BATTERY_CYCLES = 194          # Number of battery cycles - Float (0xC2)
 REG_BATTERY_GROSS_CAPACITY = 512  # Battery gross capacity (Ah) - U32 (0x200)
+# Coordinator data key for the value above. Register 512 is also the KSEM's
+# imported-energy register, and both devices are read into the same dict, so
+# the KSEM value would otherwise overwrite the gross capacity.
+KEY_BATTERY_GROSS_CAPACITY = "battery_gross_capacity_value"
 REG_BATTERY_MODEL_ID = 525        # Battery Model ID - U32 (0x20D)
 REG_BATTERY_BMS_SERIAL = 527      # Battery serial number - U32 (0x20F)
 REG_BATTERY_POWER = 582           # Actual battery charge/discharge power (W) - S16, negative=charge

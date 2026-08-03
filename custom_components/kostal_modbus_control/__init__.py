@@ -46,6 +46,7 @@ from .const import (
     REG_BATTERY_CURRENT,
     REG_BATTERY_CYCLES,
     REG_BATTERY_GROSS_CAPACITY,
+    KEY_BATTERY_GROSS_CAPACITY,
     REG_BATTERY_MODEL_ID,
     REG_BATTERY_BMS_SERIAL,
     REG_BATTERY_FIRMWARE,
@@ -126,10 +127,12 @@ class KostalCoordinator(DataUpdateCoordinator):
             data[REG_BATTERY_MGMT_MODE] = await self._handler.read_uint8(REG_BATTERY_MGMT_MODE)
             # U32 registers
             data[REG_INVERTER_STATE] = await self._handler.read_uint32(REG_INVERTER_STATE)
-            data[REG_BATTERY_GROSS_CAPACITY] = await self._handler.read_uint32(REG_BATTERY_GROSS_CAPACITY)
-            data[REG_BATTERY_MODEL_ID] = await self._handler.read_uint32(REG_BATTERY_MODEL_ID)
-            data[REG_BATTERY_BMS_SERIAL] = await self._handler.read_uint32(REG_BATTERY_BMS_SERIAL)
-            data[REG_BATTERY_FIRMWARE] = await self._handler.read_uint32(REG_BATTERY_FIRMWARE)
+            # The battery info block is big-endian regardless of the inverter's
+            # byte-order setting, unlike the state register above
+            data[KEY_BATTERY_GROSS_CAPACITY] = await self._handler.read_uint32_big_endian(REG_BATTERY_GROSS_CAPACITY)
+            data[REG_BATTERY_MODEL_ID] = await self._handler.read_uint32_big_endian(REG_BATTERY_MODEL_ID)
+            data[REG_BATTERY_BMS_SERIAL] = await self._handler.read_uint32_big_endian(REG_BATTERY_BMS_SERIAL)
+            data[REG_BATTERY_FIRMWARE] = await self._handler.read_uint32_big_endian(REG_BATTERY_FIRMWARE)
             # U16 register
             data[REG_BATTERY_TYPE] = await self._handler.read_uint16(REG_BATTERY_TYPE)
             # KSEM energy registers (separate handler, optional)

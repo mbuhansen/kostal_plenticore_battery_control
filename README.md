@@ -184,7 +184,8 @@ In 2-inverter mode, only `FeedIn` (`6`) is treated as an active inverter 1 state
 *   **Control Register:** `1034` — Active Power Control (negative = charge, positive = discharge).
 *   **Limit Registers:** `1076` / `1078` — Physical battery charge/discharge limits.
 *   **Block Registers:** `1038` / `1040` — Battery charge/discharge rate limits (set to 0 for blocking).
-*   **Inverter State Register:** `56` — Inverter state2 as U32.
+*   **Inverter State Register:** `56` — Inverter state2 as U32. Follows the inverter's Modbus byte-order setting (register `5`), like the float registers do.
+*   **Battery Info Registers:** `512` / `525` / `527` / `586` — Gross capacity, model ID, BMS serial and firmware. These U32 values are always big-endian (most significant word first) even when the byte-order setting is little-endian (CDAB), so they are read without the word swap the other 32-bit values need. Firmware is packed as major byte then minor byte, so `794` (`0x031A`) is reported as `3.26`. Gross capacity is stored under its own coordinator key because register `512` is also the KSEM's imported-energy register.
 *   **Phase Current Registers:** `222` / `232` / `242` — Grid phase currents from smart meter.
 *   **Sensor Type Register:** `1082` — Installed smart meter type.
 *   **KSEM Power Registers:** `40972` / `40974` / `40976` / `40982` / `40984` — Additional KSEM power flow values.

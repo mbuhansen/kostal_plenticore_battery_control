@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from homeassistant.components.sensor import (
     SensorEntity,
@@ -50,6 +51,7 @@ from .const import (
     REG_BATTERY_CURRENT,
     REG_BATTERY_CYCLES,
     REG_BATTERY_GROSS_CAPACITY,
+    KEY_BATTERY_GROSS_CAPACITY,
     REG_BATTERY_MODEL_ID,
     REG_BATTERY_BMS_SERIAL,
     REG_BATTERY_FIRMWARE,
@@ -204,6 +206,9 @@ class KostalBaseSensor(CoordinatorEntity, SensorEntity):
     """Base class for Kostal sensors."""
 
     _attr_has_entity_name = True
+    _key: str
+    _name: str
+    _address: int
 
     def __init__(self, coordinator: KostalCoordinator, entry_id: str) -> None:
         super().__init__(coordinator)
@@ -218,10 +223,15 @@ class KostalBaseSensor(CoordinatorEntity, SensorEntity):
         )
 
     @property
+    def _data_key(self) -> Any:
+        """Key this sensor's value is stored under in the coordinator data."""
+        return self._address
+
+    @property
     def native_value(self):
         if self.coordinator.data is None:
             return None
-        val = self.coordinator.data.get(self._address)
+        val = self.coordinator.data.get(self._data_key)
         return round(val, 2) if val is not None else None
 
     @property
@@ -301,7 +311,7 @@ class KostalBatteryPowerSensor(KostalBaseSensor):
     def native_value(self):
         if self.coordinator.data is None:
             return None
-        val = self.coordinator.data.get(self._address)
+        val = self.coordinator.data.get(self._data_key)
         return int(val) if val is not None else None
 
 
@@ -413,7 +423,7 @@ class KostalSensorTypeSensor(KostalBaseSensor):
     def native_value(self):
         if self.coordinator.data is None:
             return None
-        val = self.coordinator.data.get(self._address)
+        val = self.coordinator.data.get(self._data_key)
         if val is None:
             return None
         return SENSOR_TYPE_MAP.get(val, f"Unknown (0x{val:02X})")
@@ -601,7 +611,7 @@ class KostalInverterStateTextSensor(KostalBaseSensor):
     def native_value(self):
         if self.coordinator.data is None:
             return None
-        val = self.coordinator.data.get(self._address)
+        val = self.coordinator.data.get(self._data_key)
         if val is None:
             return None
         return INVERTER_STATE_MAP.get(val, f"Unknown ({val})")
@@ -632,7 +642,7 @@ class KostalBatteryMgmtModeSensor(KostalBaseSensor):
     def native_value(self):
         if self.coordinator.data is None:
             return None
-        return self.coordinator.data.get(self._address)
+        return self.coordinator.data.get(self._data_key)
 
 
 class KostalBatteryTypeSensor(KostalBaseSensor):
@@ -648,7 +658,7 @@ class KostalBatteryTypeSensor(KostalBaseSensor):
     def native_value(self):
         if self.coordinator.data is None:
             return None
-        val = self.coordinator.data.get(self._address)
+        val = self.coordinator.data.get(self._data_key)
         if val is None:
             return None
         return BATTERY_TYPE_MAP.get(val, f"Unknown (0x{val:04X})")
@@ -668,8 +678,11 @@ class KostalBatteryFirmwareSensor(KostalBaseSensor):
     def native_value(self):
         if self.coordinator.data is None:
             return None
-        val = self.coordinator.data.get(self._address)
-        return f"0x{val:08X}" if val is not None else None
+        val = self.coordinator.data.get(self._data_key)
+        if val is None:
+            return None
+        # Packed as major byte then minor byte, e.g. 794 (0x031A) is version 3.26
+        return f"{(val >> 8) & 0xFF}.{val & 0xFF}"
 
 
 class KostalBatteryBmsSerialSensor(KostalBaseSensor):
@@ -686,7 +699,7 @@ class KostalBatteryBmsSerialSensor(KostalBaseSensor):
     def native_value(self):
         if self.coordinator.data is None:
             return None
-        val = self.coordinator.data.get(self._address)
+        val = self.coordinator.data.get(self._data_key)
         return str(val) if val is not None else None
 
 
@@ -704,7 +717,7 @@ class KostalBatteryModelIdSensor(KostalBaseSensor):
     def native_value(self):
         if self.coordinator.data is None:
             return None
-        val = self.coordinator.data.get(self._address)
+        val = self.coordinator.data.get(self._data_key)
         return str(val) if val is not None else None
 
 
@@ -717,6 +730,11 @@ class KostalBatteryGrossCapacitySensor(KostalBaseSensor):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_entity_registry_enabled_default = False
+
+    @property
+    def _data_key(self) -> Any:
+        # Register 512 is shared with the KSEM's imported energy
+        return KEY_BATTERY_GROSS_CAPACITY
 
 
 class KostalBatteryCyclesSensor(KostalBaseSensor):
@@ -787,7 +805,7 @@ class KostalKsemEnergyImportedSensor(KostalKsemBaseSensor):
     def native_value(self):
         if self.coordinator.data is None:
             return None
-        val = self.coordinator.data.get(self._address)
+        val = self.coordinator.data.get(self._data_key)
         if val is None:
             return None
         return round(val * KSEM_SCALE, 3)
@@ -806,7 +824,7 @@ class KostalKsemEnergyExportedSensor(KostalKsemBaseSensor):
     def native_value(self):
         if self.coordinator.data is None:
             return None
-        val = self.coordinator.data.get(self._address)
+        val = self.coordinator.data.get(self._data_key)
         if val is None:
             return None
         return round(val * KSEM_SCALE, 3)
@@ -817,7 +835,7 @@ class KostalKsemIntegerSensor(KostalKsemBaseSensor):
     def native_value(self):
         if self.coordinator.data is None:
             return None
-        val = self.coordinator.data.get(self._address)
+        val = self.coordinator.data.get(self._data_key)
         return int(val) if val is not None else None
 
 

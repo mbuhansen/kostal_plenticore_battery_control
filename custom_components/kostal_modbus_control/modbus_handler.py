@@ -202,6 +202,23 @@ class KostalModbusHandler:
         raw = self._register_words_to_bytes(result.registers[0], result.registers[1])
         return struct.unpack(">I", raw)[0]
 
+    async def read_uint32_big_endian(self, address):
+        """Reads an unsigned 32-bit value with a fixed big-endian (ABCD) word order.
+
+        The battery info block in Kostal's own register map is transmitted most
+        significant word first even when the inverter's Modbus byte-order
+        setting is little-endian (CDAB), which floats and the inverter state
+        register do follow. Verified against a Plenticore with byte order 0:
+        586 reads [0x0000, 0x031A] (firmware 3.26) and 512 reads
+        [0x0000, 0x00A7] (167 Ah), while 56 reads [0x0006, 0x0000] (FeedIn).
+        """
+        result = await self._run_locked_request(
+            f"read uint32 (big endian) from {address}",
+            lambda: self._safe_read(address, 2),
+        )
+        raw = struct.pack(">HH", result.registers[0], result.registers[1])
+        return struct.unpack(">I", raw)[0]
+
     async def read_int64(self, address):
         """Reads a signed 64-bit integer from four 16-bit registers (big-endian ABCDEFGH)."""
         result = await self._run_locked_request(
