@@ -79,8 +79,12 @@ from .modbus_handler import KostalModbusHandler
 _LOGGER = logging.getLogger(__name__)
 
 
-class KostalCoordinator(DataUpdateCoordinator):
-    """Coordinator that batches all sensor reads into a single update cycle."""
+class KostalCoordinator(DataUpdateCoordinator[dict[Any, Any]]):
+    """Coordinator that batches all sensor reads into a single update cycle.
+
+    Values are keyed by register address, except where two devices share an
+    address — see KEY_BATTERY_GROSS_CAPACITY.
+    """
 
     def __init__(self, hass: HomeAssistant, handler: KostalModbusHandler, kostal_data: "KostalData") -> None:
         super().__init__(

@@ -88,6 +88,9 @@ from .const import (
     SENSOR_BATTERY_FIRMWARE,
     SENSOR_BATTERY_BMS_SERIAL,
     SENSOR_BATTERY_MODEL_ID,
+    SENSOR_BATTERY_MODEL_ID_TEXT,
+    BATTERY_TYPE_BYD,
+    BYD_MODEL_MAP,
     SENSOR_BATTERY_GROSS_CAPACITY,
     SENSOR_BATTERY_CYCLES,
     SENSOR_BATTERY_CURRENT,
@@ -171,6 +174,7 @@ async def async_setup_entry(
         KostalBatteryFirmwareSensor(coordinator, entry.entry_id),
         KostalBatteryBmsSerialSensor(coordinator, entry.entry_id),
         KostalBatteryModelIdSensor(coordinator, entry.entry_id),
+        KostalBatteryModelIdTextSensor(coordinator, entry.entry_id),
         KostalBatteryGrossCapacitySensor(coordinator, entry.entry_id),
         KostalBatteryCyclesSensor(coordinator, entry.entry_id),
         KostalBatteryCurrentSensor(coordinator, entry.entry_id),
@@ -202,7 +206,7 @@ async def async_setup_entry(
 
     async_add_entities(entities)
 
-class KostalBaseSensor(CoordinatorEntity, SensorEntity):
+class KostalBaseSensor(CoordinatorEntity[KostalCoordinator], SensorEntity):
     """Base class for Kostal sensors."""
 
     _attr_has_entity_name = True
@@ -719,6 +723,28 @@ class KostalBatteryModelIdSensor(KostalBaseSensor):
             return None
         val = self.coordinator.data.get(self._data_key)
         return str(val) if val is not None else None
+
+
+class KostalBatteryModelIdTextSensor(KostalBaseSensor):
+    _key = SENSOR_BATTERY_MODEL_ID_TEXT
+    _name = "Battery Model ID Text"
+    _address = REG_BATTERY_MODEL_ID
+    _attr_device_class = None
+    _attr_native_unit_of_measurement = None
+    _attr_state_class = None
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def native_value(self):
+        if self.coordinator.data is None:
+            return None
+        val = self.coordinator.data.get(self._data_key)
+        if val is None:
+            return None
+        # The model ID numbering is only known for BYD packs
+        if self.coordinator.data.get(REG_BATTERY_TYPE) != BATTERY_TYPE_BYD:
+            return f"Unknown ({val})"
+        return BYD_MODEL_MAP.get(val, f"Unknown ({val})")
 
 
 class KostalBatteryGrossCapacitySensor(KostalBaseSensor):

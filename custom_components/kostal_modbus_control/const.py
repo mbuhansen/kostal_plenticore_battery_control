@@ -111,6 +111,22 @@ BATTERY_TYPE_MAP = {
     0x4000: "ZYC",
 }
 
+BATTERY_TYPE_BYD = 0x0004
+
+# Battery Model ID (register 525) decoded for BYD packs
+BYD_MODEL_MAP = {
+    1: "HVS 5.1",
+    2: "HVS 7.7",
+    3: "HVS 10.2",
+    4: "HVS 12.8",
+    5: "HVM 8.3",
+    6: "HVM 11.0",
+    7: "HVM 13.8",
+    8: "HVM 16.6",
+    9: "HVM 19.3",
+    10: "HVM 22.1",
+}
+
 # Entity descriptions (Sensors)
 SENSOR_BATTERY_SOC = "battery_soc"
 SENSOR_BATTERY_POWER = "battery_power"
@@ -140,6 +156,7 @@ SENSOR_BATTERY_TYPE = "battery_type"
 SENSOR_BATTERY_FIRMWARE = "battery_firmware"
 SENSOR_BATTERY_BMS_SERIAL = "battery_bms_serial"
 SENSOR_BATTERY_MODEL_ID = "battery_model_id"
+SENSOR_BATTERY_MODEL_ID_TEXT = "battery_model_id_text"
 SENSOR_BATTERY_GROSS_CAPACITY = "battery_gross_capacity"
 SENSOR_BATTERY_CYCLES = "battery_cycles"
 SENSOR_BATTERY_CURRENT = "battery_current"
