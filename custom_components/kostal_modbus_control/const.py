@@ -7,8 +7,6 @@ CONF_MODBUS_TIMEOUT = "modbus_timeout"  # The configured timeout on the inverter
 CONF_INVERTER_TYPE = "inverter_type"
 INVERTER_TYPE_HYBRID = "hybrid"
 INVERTER_TYPE_BI = "bi"
-CONF_MIN_SOC = "min_soc"
-CONF_MAX_SOC = "max_soc"
 
 DEFAULT_PORT = 1502
 DEFAULT_UNIT_ID = 71
@@ -245,12 +243,26 @@ SWITCH_IO_OUTPUT_4 = "io_output_4"
 NUMBER_CHARGE_RATE = "charge_rate"
 NUMBER_DISCHARGE_RATE = "discharge_rate"
 NUMBER_FUSE_SIZE = "fuse_size"
+NUMBER_MIN_SOC_LIMIT = "min_soc_limit"
+NUMBER_MAX_SOC_LIMIT = "max_soc_limit"
 
 # Defaults
 DEFAULT_MAX_PERCENT = 100.0
 DEFAULT_CHARGE_RATE = 100.0
 DEFAULT_DISCHARGE_RATE = 100.0
 DEFAULT_FUSE_SIZE = 25.0  # Amps — old Kostal default; user should set to actual value
+
+# SOC limits. The bottom of the min range and the top of the max range are the
+# inverter's own built-in limits, so those values mean "not in use" — nothing is
+# written to registers 1042/1044 at all.
+MIN_SOC_LIMIT_RANGE = (5.0, 99.0)
+MAX_SOC_LIMIT_RANGE = (50.0, 100.0)
+DEFAULT_MIN_SOC_LIMIT = MIN_SOC_LIMIT_RANGE[0]
+DEFAULT_MAX_SOC_LIMIT = MAX_SOC_LIMIT_RANGE[1]
+
+# Percent points the SOC must move away from an armed limit before writes stop
+# again. 0 = release as soon as the SOC leaves the limit.
+SOC_LIMIT_HYSTERESIS = 0.0
 
 # EMS settings
 EMS_SAFETY_MARGIN = 0.90   # Trigger at 90% of fuse size

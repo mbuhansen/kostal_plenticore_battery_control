@@ -53,8 +53,8 @@ from .const import (
     BATTERY_TYPE_MAP,
     REG_BATTERY_MIN_SOC,
     REG_BATTERY_MAX_SOC,
-    CONF_MIN_SOC,
-    CONF_MAX_SOC,
+    DEFAULT_MIN_SOC_LIMIT,
+    DEFAULT_MAX_SOC_LIMIT,
     REG_CURRENT_PHASE1,
     REG_CURRENT_PHASE2,
     REG_CURRENT_PHASE3,
@@ -174,11 +174,6 @@ class KostalCoordinator(DataUpdateCoordinator[dict[Any, Any]]):
                     except Exception as err:
                         _LOGGER.debug("Failed to read %s: %s", label, err)
                         data[reg] = None
-            # Write SOC limits periodically if configured
-            if self._kostal_data.min_soc is not None:
-                await self._handler.write_float(REG_BATTERY_MIN_SOC, self._kostal_data.min_soc)
-            if self._kostal_data.max_soc is not None:
-                await self._handler.write_float(REG_BATTERY_MAX_SOC, self._kostal_data.max_soc)
             recovered = self._kostal_data.mark_communication_restored()
             if recovered:
                 _LOGGER.info("Communication with Kostal inverter restored")
@@ -206,8 +201,11 @@ class KostalData:
     inverter_model: str = ""
     inverter_power_class: str = ""
     charge_discharge_reg: int = REG_CHARGE_DISCHARGE_LIMIT
-    min_soc: float | None = None
-    max_soc: float | None = None
+    # User setpoints from the SOC limit numbers. The defaults equal the
+    # inverter's own limits, i.e. "not in use". The number entities own the
+    # register writes — see KostalSocLimitNumber in number.py.
+    min_soc: float = DEFAULT_MIN_SOC_LIMIT
+    max_soc: float = DEFAULT_MAX_SOC_LIMIT
     auto_resume_on_recovery: bool = True
     communication_ok: bool = True
     last_error: str | None = None
@@ -329,42 +327,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    # Apply SOC limits from options (if set)
-    await _apply_soc_options(handler, entry.options, data)
-
-    # Re-apply SOC limits when options are updated
-    entry.async_on_unload(
-        entry.add_update_listener(_async_options_update_listener)
-    )
-
     return True
 
-
-async def _apply_soc_options(handler, options: dict, data: "KostalData | None" = None) -> None:
-    """Write min/max SOC to inverter if configured in options, and update KostalData."""
-    for conf_key, reg, attr in (
-        (CONF_MIN_SOC, REG_BATTERY_MIN_SOC, "min_soc"),
-        (CONF_MAX_SOC, REG_BATTERY_MAX_SOC, "max_soc"),
-    ):
-        raw = options.get(conf_key, "")
-        if raw:
-            try:
-                val = max(0.0, min(100.0, float(raw)))
-                if data is not None:
-                    setattr(data, attr, val)
-                await handler.write_float(reg, val)
-                _LOGGER.info("Wrote SOC limit %s=%.1f to register %d", conf_key, val, reg)
-            except Exception as err:
-                _LOGGER.warning("Failed to write SOC limit %s: %s", conf_key, err)
-        else:
-            if data is not None:
-                setattr(data, attr, None)
-
-
-async def _async_options_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Handle options update."""
-    data: KostalData = hass.data[DOMAIN][entry.entry_id]
-    await _apply_soc_options(data.handler, entry.options, data)
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""

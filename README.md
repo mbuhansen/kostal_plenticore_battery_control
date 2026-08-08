@@ -100,6 +100,27 @@ The EMS (Energy Management System) switch protects your house fuses during force
 *   **Set Charge Rate:** Target power (W) for forced charging. Automatically clamped to the battery's physical limit.
 *   **Set Discharge Rate:** Target power (W) for forced discharging. Automatically clamped to the battery's physical limit.
 *   **House Fuse Size:** The size of your house fuses in Ampere (A). Used by EMS Grid Protection to calculate safe charge headroom.
+*   **Battery Minimum SOC Limit** *(disabled by default)*: 5–99%. `5` means not in use — that is the inverter's own minimum.
+*   **Battery Maximum SOC Limit** *(disabled by default)*: 50–100%. `100` means not in use — that is the inverter's own maximum.
+
+Both SOC limits are disabled in the entity registry out of the box; enable them on the device page to use them.
+
+### Battery SOC Limits
+
+The SOC limits are **not** written to the inverter as soon as you set them. Writing a limit early makes
+the inverter taper charge/discharge power on the approach, so instead the limit *arms* only once the
+battery actually reaches it:
+
+*   **Maximum SOC** — nothing is sent while the SoC is below the limit. When SoC reaches the limit,
+    register `1044` is written repeatedly (every `inverter timeout / 2` seconds, minimum 5s — the same
+    cadence as the charge/discharge loops). When the SoC drops below the limit again, the writes stop.
+*   **Minimum SOC** — mirrored: nothing is sent while the SoC is above the limit; register `1042` is
+    written repeatedly once the SoC drops to the limit, and the writes stop once it rises above it again.
+
+Because the registers are governed by the inverter's Modbus timeout, stopping the writes makes the
+inverter fall back to its own settings (minimum 5%, maximum 100%) on its own — no release value is
+written. The `Battery Minimum SOC` / `Battery Maximum SOC` diagnostic sensors read the registers back
+if you want to watch this happen. Each limit entity also exposes an `armed` attribute.
 
 ### Sensors (Read-Only)
 
