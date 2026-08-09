@@ -48,7 +48,7 @@ from .const import (
     REG_BATTERY_WORK_CAPACITY,
     REG_BATTERY_MGMT_MODE,
     BATTERY_MGMT_MODE_MAP,
-    REG_FIRMWARE_MC,
+    REG_SOFTWARE_VERSION,
     REG_BATTERY_TYPE,
     REG_BATTERY_CURRENT,
     REG_BATTERY_CYCLES,
@@ -89,7 +89,7 @@ from .const import (
     SENSOR_BATTERY_TYPE,
     SENSOR_BATTERY_FIRMWARE,
     SENSOR_BATTERY_BMS_SERIAL,
-    SENSOR_FIRMWARE_MC,
+    SENSOR_SOFTWARE_VERSION,
     SENSOR_BATTERY_MODEL_ID,
     SENSOR_BATTERY_MODEL_ID_TEXT,
     BATTERY_TYPE_BYD,
@@ -175,7 +175,7 @@ async def async_setup_entry(
         KostalBatteryTypeSensor(coordinator, entry.entry_id),
         # Diagnostic sensors (disabled by default) - extended battery info
         KostalBatteryFirmwareSensor(coordinator, entry.entry_id),
-        KostalFirmwareMcSensor(coordinator, entry.entry_id),
+        KostalSoftwareVersionSensor(coordinator, entry.entry_id),
         KostalBatteryBmsSerialSensor(coordinator, entry.entry_id),
         KostalBatteryModelIdSensor(coordinator, entry.entry_id),
         KostalBatteryModelIdTextSensor(coordinator, entry.entry_id),
@@ -696,12 +696,12 @@ class KostalBatteryFirmwareSensor(KostalBaseSensor):
         return f"{(val >> 8) & 0xFF}.{val & 0xFF}"
 
 
-class KostalFirmwareMcSensor(KostalBaseSensor):
-    """Main controller firmware version from register 515."""
+class KostalSoftwareVersionSensor(KostalBaseSensor):
+    """Overall software version (UI / SW) from register 58."""
 
-    _key = SENSOR_FIRMWARE_MC
-    _name = "Firmware Maincontroller"
-    _address = REG_FIRMWARE_MC
+    _key = SENSOR_SOFTWARE_VERSION
+    _name = "Software Version"
+    _address = REG_SOFTWARE_VERSION
     _attr_device_class = None
     _attr_native_unit_of_measurement = None
     _attr_state_class = None
@@ -713,7 +713,9 @@ class KostalFirmwareMcSensor(KostalBaseSensor):
         if self.coordinator.data is None:
             return None
         val = self.coordinator.data.get(self._data_key)
-        return str(val) if val is not None else None
+        if not val:
+            return None
+        return str(val).strip()
 
 
 class KostalBatteryBmsSerialSensor(KostalBaseSensor):
