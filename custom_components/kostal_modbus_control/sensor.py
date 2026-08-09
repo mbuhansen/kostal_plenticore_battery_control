@@ -48,6 +48,7 @@ from .const import (
     REG_BATTERY_WORK_CAPACITY,
     REG_BATTERY_MGMT_MODE,
     BATTERY_MGMT_MODE_MAP,
+    REG_FIRMWARE_MC,
     REG_BATTERY_TYPE,
     REG_BATTERY_CURRENT,
     REG_BATTERY_CYCLES,
@@ -88,6 +89,7 @@ from .const import (
     SENSOR_BATTERY_TYPE,
     SENSOR_BATTERY_FIRMWARE,
     SENSOR_BATTERY_BMS_SERIAL,
+    SENSOR_FIRMWARE_MC,
     SENSOR_BATTERY_MODEL_ID,
     SENSOR_BATTERY_MODEL_ID_TEXT,
     BATTERY_TYPE_BYD,
@@ -173,6 +175,7 @@ async def async_setup_entry(
         KostalBatteryTypeSensor(coordinator, entry.entry_id),
         # Diagnostic sensors (disabled by default) - extended battery info
         KostalBatteryFirmwareSensor(coordinator, entry.entry_id),
+        KostalFirmwareMcSensor(coordinator, entry.entry_id),
         KostalBatteryBmsSerialSensor(coordinator, entry.entry_id),
         KostalBatteryModelIdSensor(coordinator, entry.entry_id),
         KostalBatteryModelIdTextSensor(coordinator, entry.entry_id),
@@ -691,6 +694,26 @@ class KostalBatteryFirmwareSensor(KostalBaseSensor):
             return None
         # Packed as major byte then minor byte, e.g. 794 (0x031A) is version 3.26
         return f"{(val >> 8) & 0xFF}.{val & 0xFF}"
+
+
+class KostalFirmwareMcSensor(KostalBaseSensor):
+    """Main controller firmware version from register 515."""
+
+    _key = SENSOR_FIRMWARE_MC
+    _name = "Firmware Maincontroller"
+    _address = REG_FIRMWARE_MC
+    _attr_device_class = None
+    _attr_native_unit_of_measurement = None
+    _attr_state_class = None
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+    @property
+    def native_value(self):
+        if self.coordinator.data is None:
+            return None
+        val = self.coordinator.data.get(self._data_key)
+        return str(val) if val is not None else None
 
 
 class KostalBatteryBmsSerialSensor(KostalBaseSensor):

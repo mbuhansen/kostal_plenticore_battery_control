@@ -18,6 +18,9 @@ REG_MANUFACTURER = 535        # Inverter Manufacturer (String 16)
 REG_MODEL = 768               # Productname (String 32)
 REG_POWER_CLASS = 800         # Power class e.g. "10" (String 32)
 REG_SERIAL = 559              # Inverter Serial Number (String 16)
+# Sits inside the 512-527 info block, so it is read big-endian like its
+# neighbours rather than following the byte-order setting in register 5.
+REG_FIRMWARE_MC = 515         # Firmware Maincontroller (MC) - U32 (0x203)
 REG_INVERTER_STATE = 56       # Inverter state - U32 (0x38)
 REG_CHARGE_DISCHARGE_LIMIT = 1028      # Hybrid: Controls max charge/discharge power (%)
 REG_CHARGE_DISCHARGE_LIMIT_BI = 1030   # BI: Controls max charge/discharge power (%)
@@ -165,6 +168,7 @@ SENSOR_BATTERY_MGMT_MODE = "battery_mgmt_mode"
 SENSOR_BATTERY_TYPE = "battery_type"
 SENSOR_BATTERY_FIRMWARE = "battery_firmware"
 SENSOR_BATTERY_BMS_SERIAL = "battery_bms_serial"
+SENSOR_FIRMWARE_MC = "firmware_mc"
 SENSOR_BATTERY_MODEL_ID = "battery_model_id"
 SENSOR_BATTERY_MODEL_ID_TEXT = "battery_model_id_text"
 SENSOR_BATTERY_GROSS_CAPACITY = "battery_gross_capacity"

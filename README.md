@@ -204,6 +204,7 @@ Enable these on the device page when you need them:
 | Battery Gross Capacity | Ah | Gross battery capacity |
 | Battery Management Mode | — | Register 1080 mapped to text — must be "External battery management via Modbus protocol" for control to work |
 | Battery Firmware | — | Battery firmware version |
+| Firmware Maincontroller | — | Inverter main controller (MC) firmware from register 515, raw U32 |
 | Battery BMS Serial Number | — | Battery BMS serial |
 | Battery Model ID | — | Raw battery model ID |
 | Battery Minimum SOC / Battery Maximum SOC | % | Read-back of registers 1042 / 1044 |
@@ -282,6 +283,7 @@ KSEM sensors are grouped under their own device, separate from the inverter.
 *   **SOC Limit Registers:** `1042` / `1044` — Minimum/maximum SOC. Only in effect while actively written.
 *   **I/O Output Registers:** `608` / `609` / `610` / `611` — I/O board switched outputs.
 *   **Inverter State Register:** `56` — Inverter state2 as U32. Follows the inverter's Modbus byte-order setting (register `5`), like the float registers do.
+*   **Main Controller Firmware Register:** `515` — Firmware Maincontroller (MC) as U32. Inside the big-endian info block below, so it is read the same way.
 *   **Battery Info Registers:** `512` / `525` / `527` / `586` — Gross capacity, model ID, BMS serial and firmware. These U32 values are always big-endian (most significant word first) even when the byte-order setting is little-endian (CDAB), so they are read without the word swap the other 32-bit values need. Firmware is packed as major byte then minor byte, so `794` (`0x031A`) is reported as `3.26`. Gross capacity is stored under its own coordinator key because register `512` is also the KSEM's imported-energy register.
 *   **Phase Current Registers:** `222` / `232` / `242` — Grid phase currents from smart meter.
 *   **Sensor Type Register:** `1082` — Installed smart meter type. Read once during setup to detect a KSEM, and on every poll for the EMS switch.

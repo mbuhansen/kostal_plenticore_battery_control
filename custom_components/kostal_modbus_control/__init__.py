@@ -50,6 +50,7 @@ from .const import (
     REG_BATTERY_MODEL_ID,
     REG_BATTERY_BMS_SERIAL,
     REG_BATTERY_FIRMWARE,
+    REG_FIRMWARE_MC,
     BATTERY_TYPE_MAP,
     REG_BATTERY_MIN_SOC,
     REG_BATTERY_MAX_SOC,
@@ -134,6 +135,7 @@ class KostalCoordinator(DataUpdateCoordinator[dict[Any, Any]]):
             # The battery info block is big-endian regardless of the inverter's
             # byte-order setting, unlike the state register above
             data[KEY_BATTERY_GROSS_CAPACITY] = await self._handler.read_uint32_big_endian(REG_BATTERY_GROSS_CAPACITY)
+            data[REG_FIRMWARE_MC] = await self._handler.read_uint32_big_endian(REG_FIRMWARE_MC)
             data[REG_BATTERY_MODEL_ID] = await self._handler.read_uint32_big_endian(REG_BATTERY_MODEL_ID)
             data[REG_BATTERY_BMS_SERIAL] = await self._handler.read_uint32_big_endian(REG_BATTERY_BMS_SERIAL)
             data[REG_BATTERY_FIRMWARE] = await self._handler.read_uint32_big_endian(REG_BATTERY_FIRMWARE)
