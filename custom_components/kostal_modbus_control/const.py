@@ -95,6 +95,18 @@ REG_BATTERY_MAX_DISCHARGE_LIMIT = 1078 # Max Discharge Limit (W) - Float
 REG_BATTERY_WORK_CAPACITY = 1068       # Battery work capacity (Wh) - Float
 REG_BATTERY_MGMT_MODE = 1080          # Battery management mode - U8
 
+# Battery management modes reported by register 1080. Only MODBUS accepts the
+# external charge/discharge commands this integration sends — in the other two
+# modes the inverter silently ignores every write.
+BATTERY_MGMT_MODE_NONE = 0x00
+BATTERY_MGMT_MODE_DIGITAL_IO = 0x01
+BATTERY_MGMT_MODE_MODBUS = 0x02
+BATTERY_MGMT_MODE_MAP = {
+    BATTERY_MGMT_MODE_NONE: "No external battery management",
+    BATTERY_MGMT_MODE_DIGITAL_IO: "External battery management via digital I/O",
+    BATTERY_MGMT_MODE_MODBUS: "External battery management via Modbus protocol",
+}
+
 BATTERY_TYPE_MAP = {
     0x0000: "No battery (PV only)",
     0x0002: "PIKO Battery Li",

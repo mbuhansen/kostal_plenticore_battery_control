@@ -25,6 +25,16 @@ This custom integration allows for advanced Battery control of Kostal Plenticore
 3.  Change **Battery Management** to: **"External via protocol (Modbus TCP)"**.
 4.  Note the **Timeout** setting in the Web UI (default is often 30s or 60s). This must match the timeout configured in this integration.
 
+Step 3 is not optional. The inverter reports its battery management mode in register `1080`:
+
+| Value | Mode | Accepts commands from this integration? |
+|---|---|---|
+| `0x00` | No external battery management | No |
+| `0x01` | External battery management via digital I/O | No |
+| `0x02` | External battery management via Modbus protocol | **Yes** |
+
+In the first two modes the inverter **silently ignores** every write — the switches turn on, no error appears anywhere, and the battery simply does nothing. Setup reads register `1080` and shows a warning screen if it is not `0x02`, but lets you continue anyway so you can fix the inverter setting afterwards. The `Battery Management Mode` diagnostic sensor shows the current mode at any time.
+
 > Port **1502** and Unit ID **71** are fixed and used automatically — no manual configuration needed.
 
 ## Installation
@@ -49,7 +59,8 @@ This custom integration allows for advanced Battery control of Kostal Plenticore
     *   **Inverter Type:**
         *   **Plenticore Hybrid** — charge/discharge power is controlled through register `1028`.
         *   **Plenticore BI / Battery Inverter** — charge/discharge power is controlled through register `1030`.
-5.  If the inverter reports a **KOSTAL Smart Energy Meter** as its connected meter (sensor type `0x03`), a second step offers to add the KSEM's IP address. This is optional — leave it empty to skip. With it configured, the integration opens a second Modbus connection to the KSEM (port `502`, unit ID `1`) and adds the energy and power-flow sensors listed below.
+5.  If battery management is not set to Modbus, a warning screen appears explaining what to change in the Inverter Web UI. Setup continues when you submit it.
+6.  If the inverter reports a **KOSTAL Smart Energy Meter** as its connected meter (sensor type `0x03`), a second step offers to add the KSEM's IP address. This is optional — leave it empty to skip. With it configured, the integration opens a second Modbus connection to the KSEM (port `502`, unit ID `1`) and adds the energy and power-flow sensors listed below.
 
 There are no options to configure after setup; everything else is controlled through entities.
 
@@ -191,7 +202,7 @@ Enable these on the device page when you need them:
 | Battery Cycles | — | Number of battery cycles |
 | Battery Work Capacity | Wh | Usable battery capacity |
 | Battery Gross Capacity | Ah | Gross battery capacity |
-| Battery Management Mode | — | Internal vs. external battery management |
+| Battery Management Mode | — | Register 1080 mapped to text — must be "External battery management via Modbus protocol" for control to work |
 | Battery Firmware | — | Battery firmware version |
 | Battery BMS Serial Number | — | Battery BMS serial |
 | Battery Model ID | — | Raw battery model ID |
@@ -273,7 +284,8 @@ KSEM sensors are grouped under their own device, separate from the inverter.
 *   **Inverter State Register:** `56` — Inverter state2 as U32. Follows the inverter's Modbus byte-order setting (register `5`), like the float registers do.
 *   **Battery Info Registers:** `512` / `525` / `527` / `586` — Gross capacity, model ID, BMS serial and firmware. These U32 values are always big-endian (most significant word first) even when the byte-order setting is little-endian (CDAB), so they are read without the word swap the other 32-bit values need. Firmware is packed as major byte then minor byte, so `794` (`0x031A`) is reported as `3.26`. Gross capacity is stored under its own coordinator key because register `512` is also the KSEM's imported-energy register.
 *   **Phase Current Registers:** `222` / `232` / `242` — Grid phase currents from smart meter.
-*   **Sensor Type Register:** `1082` — Installed smart meter type.
+*   **Sensor Type Register:** `1082` — Installed smart meter type. Read once during setup to detect a KSEM, and on every poll for the EMS switch.
+*   **Battery Management Register:** `1080` — Battery management mode. Read during setup to warn when it is not `0x02` (Modbus).
 *   **KSEM Power Registers:** `40972` / `40974` / `40976` / `40982` / `40984` — Additional KSEM power flow values.
 *   **KSEM SoC Register:** `40986` — KSEM system state of charge.
 *   **KSEM Home Consumption Registers:** `40988` / `40990` / `40992` — Home consumption split by source.

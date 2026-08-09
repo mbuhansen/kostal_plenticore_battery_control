@@ -47,6 +47,7 @@ from .const import (
     REG_DISCHARGE_RATE,
     REG_BATTERY_WORK_CAPACITY,
     REG_BATTERY_MGMT_MODE,
+    BATTERY_MGMT_MODE_MAP,
     REG_BATTERY_TYPE,
     REG_BATTERY_CURRENT,
     REG_BATTERY_CYCLES,
@@ -646,7 +647,10 @@ class KostalBatteryMgmtModeSensor(KostalBaseSensor):
     def native_value(self):
         if self.coordinator.data is None:
             return None
-        return self.coordinator.data.get(self._data_key)
+        val = self.coordinator.data.get(self._data_key)
+        if val is None:
+            return None
+        return BATTERY_MGMT_MODE_MAP.get(val, f"Unknown (0x{val:02X})")
 
 
 class KostalBatteryTypeSensor(KostalBaseSensor):

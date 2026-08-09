@@ -11,6 +11,10 @@
                 },
                 "description": "Enter connection details for your Kostal Inverter.\n\n**IMPORTANT:** Remember to change Battery Management to \"External via protocol (Modbus TCP)\" in the battery settings on the Inverter Web UI. (This requires installer code access).\n\n**Unit ID** should be **71** for battery management registers on Plenticore inverters."
             },
+            "battery_management": {
+                "title": "⚠️ Battery Management Is Not Set to Modbus",
+                "description": "Your inverter reports its battery management as:\n\n**{current_mode}**\n\nThis integration controls the battery by writing to Modbus registers, and the inverter **silently ignores every one of those writes** unless battery management is set to Modbus. Charge and discharge switches will appear to work but nothing will happen.\n\nTo fix it, log in to the Inverter Web UI as **Installer**, go to **Settings → Battery Management**, and change it to **\"External via protocol (Modbus TCP)\"**.\n\nYou can continue setup now and change the inverter setting afterwards — the sensors will work either way. Submit to continue."
+            },
             "ksem": {
                 "title": "KOSTAL Smart Energy Meter (KSEM) Detected",
                 "data": {
