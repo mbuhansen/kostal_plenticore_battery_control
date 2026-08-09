@@ -8,8 +8,8 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant import config_entries
+from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.const import CONF_HOST
-from homeassistant.data_entry_flow import FlowResult
 
 from homeassistant.helpers.selector import SelectSelector, SelectSelectorConfig, SelectSelectorMode
 
@@ -40,7 +40,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Handle the initial step."""
         errors: dict[str, str] = {}
         
@@ -100,7 +100,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    async def _async_continue(self) -> FlowResult:
+    async def _async_continue(self) -> ConfigFlowResult:
         """Continue to the KSEM step if one was detected, otherwise finish."""
         # KSEM detected (0x03) — offer to read it directly
         if self._sensor_type == 0x03:
@@ -112,15 +112,16 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_battery_management(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Warn that battery management is not set to Modbus, but let setup continue."""
         if user_input is not None:
             return await self._async_continue()
 
         mode = self._battery_mgmt_mode
-        current_mode = BATTERY_MGMT_MODE_MAP.get(
-            mode, f"Unknown (0x{mode:02X})" if mode is not None else "Unknown"
-        )
+        if mode is None:
+            current_mode = "Unknown"
+        else:
+            current_mode = BATTERY_MGMT_MODE_MAP.get(mode, f"Unknown (0x{mode:02X})")
         return self.async_show_form(
             step_id="battery_management",
             data_schema=vol.Schema({}),
@@ -129,7 +130,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_ksem(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Optional step to configure KOSTAL Smart Energy Meter (KSEM)."""
         errors: dict[str, str] = {}
 

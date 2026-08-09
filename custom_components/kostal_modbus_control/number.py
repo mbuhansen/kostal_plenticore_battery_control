@@ -4,7 +4,7 @@ import logging
 from datetime import timedelta
 from typing import Any
 
-from homeassistant.components.number import NumberEntity, RestoreNumber
+from homeassistant.components.number import NumberEntity, NumberMode, RestoreNumber
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE
 from homeassistant.core import HomeAssistant, callback
@@ -59,7 +59,7 @@ class KostalNumber(RestoreNumber):
     _attr_native_min_value = 0.0
     _attr_native_max_value = 100.0
     _attr_native_step = 1.0
-    _attr_mode = "box"
+    _attr_mode = NumberMode.BOX
 
     def __init__(self, data, entry_id, key, name, unit, default):
         self._data = data
@@ -107,7 +107,7 @@ class KostalFuseSizeNumber(RestoreNumber):
     _attr_native_max_value = 125.0
     _attr_native_step = 1.0
     _attr_native_unit_of_measurement = "A"
-    _attr_mode = "box"
+    _attr_mode = NumberMode.BOX
     _attr_name = "House Fuse Size"
     _attr_icon = "mdi:fuse"
     _attr_entity_category = EntityCategory.CONFIG
@@ -159,7 +159,7 @@ class KostalSocLimitNumber(RestoreNumber):
     _attr_should_poll = False
     _attr_native_unit_of_measurement = PERCENTAGE
     _attr_native_step = 1.0
-    _attr_mode = "box"
+    _attr_mode = NumberMode.BOX
     _attr_entity_registry_enabled_default = False
 
     def __init__(self, data, entry_id: str) -> None:
@@ -190,6 +190,8 @@ class KostalSocLimitNumber(RestoreNumber):
         await super().async_added_to_hass()
         if (state := await self.async_get_last_number_data()) is not None and state.native_value is not None:
             self._attr_native_value = self._clamp(float(state.native_value))
+        if self._attr_native_value is None:
+            self._attr_native_value = self._inactive_value
         self._store_value(self._attr_native_value)
         self.async_write_ha_state()
 
