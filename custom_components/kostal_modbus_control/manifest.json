@@ -3,10 +3,10 @@
   "name": "Kostal Plenticore Battery Control",
   "codeowners": [],
   "config_flow": true,
-  "documentation": "https://github.com/home-assistant/core",
+  "documentation": "https://github.com/mbuhansen/kostal_plenticore_battery_control",
   "iot_class": "local_polling",
   "requirements": [
     "pymodbus>=3.6.0"
   ],
-  "version": "1.0.1"
+  "version": "2.0.0"
 }
