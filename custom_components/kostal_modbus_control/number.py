@@ -26,7 +26,7 @@ from .const import (
     DEFAULT_MAX_SOC_LIMIT,
     MIN_SOC_LIMIT_RANGE,
     MAX_SOC_LIMIT_RANGE,
-    SOC_LIMIT_HYSTERESIS,
+    SOC_LIMIT_ARM_MARGIN,
     REG_BATTERY_SOC,
     REG_BATTERY_MIN_SOC,
     REG_BATTERY_MAX_SOC,
@@ -138,19 +138,22 @@ class KostalFuseSizeNumber(RestoreNumber):
 class KostalSocLimitNumber(RestoreNumber):
     """Base for the battery min/max SOC limits.
 
-    The limit is not pushed to the inverter while the battery is far away from
-    it — writing it early makes the inverter taper charge/discharge power on the
-    approach. Instead the entity "arms" once the SoC actually reaches the limit
-    and then writes the register on the same cadence as the charge/discharge
-    loops, keeping the inverter's Modbus watchdog fed. When the SoC leaves the
-    limit again the writes simply stop and the inverter falls back to its own
-    settings (min 5%, max 100%).
+    Registers 1042/1044 are governed by the inverter's Modbus timeout: a limit
+    only holds while it is being sent, and the inverter reverts to its own
+    settings (min 5%, max 100%) once the writes stop. So the limit is left alone
+    while the battery is far away from it, and the entity "arms"
+    SOC_LIMIT_ARM_MARGIN percent points before the limit — early enough that the
+    inverter already has it by the time the battery gets there. While armed the
+    register is written on the same cadence as the charge/discharge loops to keep
+    the watchdog fed. Moving back past the arm threshold simply stops the writes;
+    no release value is ever sent.
     """
 
     _key: str
     _register: int
     _data_attr: str
     _inactive_value: float
+    _arms_when_falling: bool  # True for the minimum limit, False for the maximum
 
     _attr_has_entity_name = True
     _attr_should_poll = False
@@ -177,7 +180,11 @@ class KostalSocLimitNumber(RestoreNumber):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        return {"armed": self._armed, "active": self._is_active()}
+        return {
+            "armed": self._armed,
+            "active": self._is_active(),
+            "arms_at": self._arm_threshold(),
+        }
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -218,15 +225,21 @@ class KostalSocLimitNumber(RestoreNumber):
             return False
         return abs(self._attr_native_value - self._inactive_value) >= 0.5
 
-    @staticmethod
-    def _evaluate_armed(soc: float, value: float) -> bool | None:
-        """Return the wanted armed state, or None to keep the current one."""
-        raise NotImplementedError
+    def _arm_threshold(self) -> float | None:
+        """SoC at which writing starts, or None when the limit is not in use."""
+        value = self._attr_native_value
+        if value is None or not self._is_active():
+            return None
+        margin = SOC_LIMIT_ARM_MARGIN if self._arms_when_falling else -SOC_LIMIT_ARM_MARGIN
+        return float(value) + margin
+
+    def _wants_arm(self, soc: float, threshold: float) -> bool:
+        return soc <= threshold if self._arms_when_falling else soc >= threshold
 
     @callback
     def _evaluate(self) -> None:
-        value = self._attr_native_value
-        if value is None or not self._is_active():
+        threshold = self._arm_threshold()
+        if threshold is None:
             self._disarm("limit not in use")
             return
 
@@ -238,21 +251,21 @@ class KostalSocLimitNumber(RestoreNumber):
             _LOGGER.debug("%s: no battery SoC available, keeping armed=%s", self.name, self._armed)
             return
 
-        wanted = self._evaluate_armed(float(soc), float(value))
-        if wanted is True:
-            self._arm(float(soc))
-        elif wanted is False:
-            self._disarm(f"battery SoC {float(soc):.1f}% left the limit")
+        if self._wants_arm(float(soc), threshold):
+            self._arm(float(soc), threshold)
+        else:
+            self._disarm(f"battery SoC {float(soc):.1f}% moved past {threshold:.0f}%")
 
-    def _arm(self, soc: float) -> None:
+    def _arm(self, soc: float, threshold: float) -> None:
         if self._armed:
             return
         self._armed = True
         _LOGGER.info(
-            "%s armed at %.0f%% (battery SoC %.1f%%) — writing register %d every %ds",
+            "%s armed at %.0f%% (battery SoC %.1f%% reached %.0f%%) — writing register %d every %ds",
             self.name,
             self._attr_native_value,
             soc,
+            threshold,
             self._register,
             self._loop_interval,
         )
@@ -307,18 +320,11 @@ class KostalMinSocLimitNumber(KostalSocLimitNumber):
     _register = REG_BATTERY_MIN_SOC
     _data_attr = "min_soc"
     _inactive_value = DEFAULT_MIN_SOC_LIMIT
+    _arms_when_falling = True
     _attr_name = "Battery Minimum SOC Limit"
     _attr_icon = "mdi:battery-arrow-down-outline"
     _attr_native_min_value = MIN_SOC_LIMIT_RANGE[0]
     _attr_native_max_value = MIN_SOC_LIMIT_RANGE[1]
-
-    @staticmethod
-    def _evaluate_armed(soc: float, value: float) -> bool | None:
-        if soc <= value:
-            return True
-        if soc > value + SOC_LIMIT_HYSTERESIS:
-            return False
-        return None
 
 
 class KostalMaxSocLimitNumber(KostalSocLimitNumber):
@@ -328,15 +334,8 @@ class KostalMaxSocLimitNumber(KostalSocLimitNumber):
     _register = REG_BATTERY_MAX_SOC
     _data_attr = "max_soc"
     _inactive_value = DEFAULT_MAX_SOC_LIMIT
+    _arms_when_falling = False
     _attr_name = "Battery Maximum SOC Limit"
     _attr_icon = "mdi:battery-arrow-up-outline"
     _attr_native_min_value = MAX_SOC_LIMIT_RANGE[0]
     _attr_native_max_value = MAX_SOC_LIMIT_RANGE[1]
-
-    @staticmethod
-    def _evaluate_armed(soc: float, value: float) -> bool | None:
-        if soc >= value:
-            return True
-        if soc < value - SOC_LIMIT_HYSTERESIS:
-            return False
-        return None

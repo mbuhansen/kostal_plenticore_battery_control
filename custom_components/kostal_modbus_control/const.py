@@ -260,9 +260,12 @@ MAX_SOC_LIMIT_RANGE = (50.0, 100.0)
 DEFAULT_MIN_SOC_LIMIT = MIN_SOC_LIMIT_RANGE[0]
 DEFAULT_MAX_SOC_LIMIT = MAX_SOC_LIMIT_RANGE[1]
 
-# Percent points the SOC must move away from an armed limit before writes stop
-# again. 0 = release as soon as the SOC leaves the limit.
-SOC_LIMIT_HYSTERESIS = 0.0
+# Percent points before a SOC limit where the writes start. Arming a little
+# early makes sure the limit is already in effect at the inverter by the time
+# the battery reaches it — arming is only re-evaluated once per coordinator
+# poll, so the SoC can move a bit between checks. Doubles as the release band:
+# an armed limit is held until the SoC falls back past this same threshold.
+SOC_LIMIT_ARM_MARGIN = 2.0
 
 # EMS settings
 EMS_SAFETY_MARGIN = 0.90   # Trigger at 90% of fuse size
