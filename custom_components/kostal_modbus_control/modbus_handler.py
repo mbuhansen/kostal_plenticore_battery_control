@@ -102,11 +102,23 @@ class KostalModbusHandler:
 
             return result
 
+    def _require_client(self):
+        """Return the connected client.
+
+        Callers reach this only through _run_locked_request, which calls
+        _ensure_connected() under the same lock first, so the client is always
+        set. Should that ever stop holding, raise the error the retry logic
+        already understands instead of an AttributeError on None.
+        """
+        if self._client is None:
+            raise KostalModbusConnectionError("Modbus client is not connected")
+        return self._client
+
     def _detect_unit_kwarg(self):
         """Detect the parameter name for slave/unit ID in this pymodbus version."""
         if self._unit_kwarg is not None:
             return
-        params = inspect.signature(self._client.read_holding_registers).parameters
+        params = inspect.signature(self._require_client().read_holding_registers).parameters
         self._logger.debug("pymodbus read_holding_registers params: %s", list(params.keys()))
         for name in ("slave", "unit", "dev_id", "device_id"):
             if name in params:
@@ -122,7 +134,7 @@ class KostalModbusHandler:
         kwargs = {"count": count}
         if self._unit_kwarg:
             kwargs[self._unit_kwarg] = self._unit_id
-        return await self._client.read_holding_registers(address, **kwargs)
+        return await self._require_client().read_holding_registers(address, **kwargs)
 
     async def _safe_write(self, address, values):
         """Write registers with auto-detected unit_id parameter name."""
@@ -130,7 +142,7 @@ class KostalModbusHandler:
         kwargs = {"values": values}
         if self._unit_kwarg:
             kwargs[self._unit_kwarg] = self._unit_id
-        return await self._client.write_registers(address, **kwargs)
+        return await self._require_client().write_registers(address, **kwargs)
 
     async def _safe_write_single(self, address, value):
         """Write a single register with auto-detected unit_id parameter name."""
@@ -138,7 +150,7 @@ class KostalModbusHandler:
         kwargs = {"value": value}
         if self._unit_kwarg:
             kwargs[self._unit_kwarg] = self._unit_id
-        return await self._client.write_register(address, **kwargs)
+        return await self._require_client().write_register(address, **kwargs)
 
     async def read_string(self, address, length):
         """Reads a string from holding registers."""

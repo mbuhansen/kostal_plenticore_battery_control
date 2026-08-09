@@ -1,0 +1,7 @@
+{
+  "include": ["custom_components"],
+  "venvPath": ".",
+  "venv": ".venv",
+  "typeCheckingMode": "basic",
+  "reportIncompatibleVariableOverride": "none"
+}
