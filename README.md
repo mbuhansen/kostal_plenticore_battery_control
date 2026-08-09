@@ -107,9 +107,11 @@ Both SOC limits are disabled in the entity registry out of the box; enable them 
 
 ### Battery SOC Limits
 
-The SOC limits are **not** written to the inverter as soon as you set them. Writing a limit early makes
-the inverter taper charge/discharge power on the approach, so instead the limit *arms* only once the
-battery actually reaches it:
+Registers `1042`/`1044` are governed by the inverter's Modbus timeout: a limit is only in effect while
+it is actively being sent, and the inverter reverts to its own settings (minimum 5%, maximum 100%) as
+soon as the writes stop. The limits are therefore **not** written as soon as you set them — a limit
+*arms* only once the battery actually reaches it, so the inverter stays on its own control the rest of
+the time:
 
 *   **Maximum SOC** — nothing is sent while the SoC is below the limit. When SoC reaches the limit,
     register `1044` is written repeatedly (every `inverter timeout / 2` seconds, minimum 5s — the same
@@ -117,10 +119,17 @@ battery actually reaches it:
 *   **Minimum SOC** — mirrored: nothing is sent while the SoC is above the limit; register `1042` is
     written repeatedly once the SoC drops to the limit, and the writes stop once it rises above it again.
 
-Because the registers are governed by the inverter's Modbus timeout, stopping the writes makes the
-inverter fall back to its own settings (minimum 5%, maximum 100%) on its own — no release value is
-written. The `Battery Minimum SOC` / `Battery Maximum SOC` diagnostic sensors read the registers back
-if you want to watch this happen. Each limit entity also exposes an `armed` attribute.
+No release value is ever written — the inverter's own timeout handles that. Measured on a Plenticore:
+writing `85` to the maximum SOC while the battery sat at 87% stopped charging right away, and the
+register went back to `100` by itself once the writes stopped. Sending the limits does not interfere
+with the charge/discharge switches handing control back to the inverter afterwards.
+
+Because arming is evaluated on the coordinator poll (every 15s), the SoC can drift slightly past the
+limit before the first write lands. That is harmless: the inverter accepts a limit below the current
+SoC and stops charging immediately.
+
+The `Battery Minimum SOC` / `Battery Maximum SOC` diagnostic sensors read the registers back if you
+want to watch this happen. Each limit entity also exposes an `armed` attribute.
 
 ### Sensors (Read-Only)
 
