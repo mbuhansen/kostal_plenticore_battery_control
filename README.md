@@ -100,7 +100,7 @@ While active, `Charge Start` compares the battery SoC against `predbat.best_char
 *   **Hold** — the SoC is above the start threshold. The charge setpoint is released and, after a 45 second settling wait, discharge is blocked while the SoC is at or below `best_charge_limit + 1%`, keeping the battery where Predbat wants it.
 *   Above `best_charge_limit + 1%` the inverter is released completely and discharges freely again.
 
-The 2-point start band and the 1-point hold band (`PREDBAT_CHARGE_START_DELTA` and `PREDBAT_HOLD_DELTA` in `const.py`) form a 3-point hysteresis window, so the switch does not flip between charging and holding on every poll.
+The 1-point start band and the 1-point hold band (`PREDBAT_CHARGE_START_DELTA` and `PREDBAT_HOLD_DELTA` in `const.py`) form a 2-point hysteresis window, so the switch does not flip between charging and holding on every poll.
 
 Two Predbat features are followed automatically:
 
