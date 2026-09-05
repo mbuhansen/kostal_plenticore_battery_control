@@ -26,8 +26,6 @@ from .const import (
     DEFAULT_MAX_SOC_LIMIT,
     MIN_SOC_LIMIT_RANGE,
     MAX_SOC_LIMIT_RANGE,
-    SOC_LIMIT_ARM_MARGIN,
-    REG_BATTERY_SOC,
     REG_BATTERY_MIN_SOC,
     REG_BATTERY_MAX_SOC,
 )
@@ -140,34 +138,34 @@ class KostalSocLimitNumber(RestoreNumber):
 
     Registers 1042/1044 are governed by the inverter's Modbus timeout: a limit
     only holds while it is being sent, and the inverter reverts to its own
-    settings (min 5%, max 100%) once the writes stop. So the limit is left alone
-    while the battery is far away from it, and the entity "arms"
-    SOC_LIMIT_ARM_MARGIN percent points before the limit — early enough that the
-    inverter already has it by the time the battery gets there. While armed the
-    register is written on the same cadence as the charge/discharge loops to keep
-    the watchdog fed. Moving back past the arm threshold simply stops the writes;
-    no release value is ever sent.
+    settings (min 5%, max 100%) once the writes stop. A limit that is in use is
+    therefore written continuously — from the moment it is set, on the same
+    cadence as the charge/discharge loops — so it stays in force for as long as
+    it is set. The inverter tapers charge/discharge power as the SoC approaches
+    the limit; that taper is what makes "stop charging at 50%" actually hold.
+
+    Setting a limit back to the inverter's own value (min 5%, max 100%) means
+    "not in use": that value is written once so the release takes effect
+    straight away instead of waiting out the inverter's timeout, and nothing is
+    sent afterwards.
     """
 
     _key: str
     _register: int
     _data_attr: str
     _inactive_value: float
-    _arms_when_falling: bool  # True for the minimum limit, False for the maximum
 
     _attr_has_entity_name = True
     _attr_should_poll = False
     _attr_native_unit_of_measurement = PERCENTAGE
     _attr_native_step = 1.0
     _attr_mode = NumberMode.BOX
-    _attr_entity_registry_enabled_default = False
 
     def __init__(self, data, entry_id: str) -> None:
         self._data = data
         self._entry_id = entry_id
         self._attr_unique_id = f"{entry_id}_{self._key}"
         self._attr_native_value = self._inactive_value
-        self._armed = False
         self._remove_timer = None
         self._write_task = None
         # Write twice per inverter timeout, same as the charge/discharge loops
@@ -181,9 +179,8 @@ class KostalSocLimitNumber(RestoreNumber):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return {
-            "armed": self._armed,
             "active": self._is_active(),
-            "arms_at": self._arm_threshold(),
+            "writing": self._remove_timer is not None,
         }
 
     async def async_added_to_hass(self) -> None:
@@ -193,27 +190,37 @@ class KostalSocLimitNumber(RestoreNumber):
         if self._attr_native_value is None:
             self._attr_native_value = self._inactive_value
         self._store_value(self._attr_native_value)
+        self._apply()
+        if self._is_active():
+            # Fire and forget — awaiting a Modbus round-trip here would hold up
+            # entity setup on a slow or unreachable inverter
+            self._schedule_write()
         self.async_write_ha_state()
-
-        coordinator = self._data.coordinator
-        if coordinator is not None:
-            self.async_on_remove(coordinator.async_add_listener(self._evaluate))
-        self._evaluate()
 
     async def async_will_remove_from_hass(self) -> None:
         self._cancel_timer()
-        self._armed = False
+        if self._write_task is not None and not self._write_task.done():
+            self._write_task.cancel()
+        self._write_task = None
 
     async def async_set_native_value(self, value: float) -> None:
         self._attr_native_value = self._clamp(value)
         self._store_value(self._attr_native_value)
+        self._apply()
         self.async_write_ha_state()
-
-        was_armed = self._armed
-        self._evaluate()
-        if was_armed and self._armed:
-            # Still armed, but on a different value — push it straight away
-            self._schedule_write()
+        pending = self._write_task
+        if pending is not None and not pending.done():
+            # A keep-alive write already in flight captured the previous value,
+            # so let it land before writing the new one — the other order would
+            # undo the change until the next tick, or for good on a release
+            try:
+                await pending
+            except Exception:  # already logged and handled inside the write
+                pass
+        # Awaited rather than scheduled so a value change is never dropped
+        # behind an in-flight keep-alive write. This is also the one-shot
+        # release write when the limit was just set back to its inactive value.
+        await self._async_write_limit()
 
     def _clamp(self, value: float) -> float:
         return max(self._attr_native_min_value, min(self._attr_native_max_value, value))
@@ -227,73 +234,39 @@ class KostalSocLimitNumber(RestoreNumber):
             return False
         return abs(self._attr_native_value - self._inactive_value) >= 0.5
 
-    def _arm_threshold(self) -> float | None:
-        """SoC at which writing starts, or None when the limit is not in use."""
-        value = self._attr_native_value
-        if value is None or not self._is_active():
-            return None
-        margin = SOC_LIMIT_ARM_MARGIN if self._arms_when_falling else -SOC_LIMIT_ARM_MARGIN
-        return float(value) + margin
-
-    def _wants_arm(self, soc: float, threshold: float) -> bool:
-        return soc <= threshold if self._arms_when_falling else soc >= threshold
-
     @callback
-    def _evaluate(self) -> None:
-        threshold = self._arm_threshold()
-        if threshold is None:
-            self._disarm("limit not in use")
-            return
-
-        coordinator = self._data.coordinator
-        soc = None
-        if coordinator is not None and coordinator.data is not None:
-            soc = coordinator.data.get(REG_BATTERY_SOC)
-        if soc is None:
-            _LOGGER.debug("%s: no battery SoC available, keeping armed=%s", self.name, self._armed)
-            return
-
-        if self._wants_arm(float(soc), threshold):
-            self._arm(float(soc), threshold)
+    def _apply(self) -> None:
+        """Bring the keep-alive write loop in line with the current value."""
+        if self._is_active():
+            self._start_timer()
         else:
-            self._disarm(f"battery SoC {float(soc):.1f}% moved past {threshold:.0f}%")
+            self._cancel_timer()
 
-    def _arm(self, soc: float, threshold: float) -> None:
-        if self._armed:
+    def _start_timer(self) -> None:
+        if self._remove_timer is not None:
             return
-        self._armed = True
         _LOGGER.info(
-            "%s armed at %.0f%% (battery SoC %.1f%% reached %.0f%%) — writing register %d every %ds",
+            "%s set to %.0f%% — writing register %d every %ds",
             self.name,
             self._attr_native_value,
-            soc,
-            threshold,
             self._register,
             self._loop_interval,
         )
         self._remove_timer = async_track_time_interval(
             self.hass, self._async_write_tick, timedelta(seconds=self._loop_interval)
         )
-        self._schedule_write()
-        self.async_write_ha_state()
-
-    def _disarm(self, reason: str) -> None:
-        self._cancel_timer()
-        if not self._armed:
-            return
-        self._armed = False
-        _LOGGER.info(
-            "%s released (%s) — no longer writing register %d, the inverter falls back to its own limit",
-            self.name,
-            reason,
-            self._register,
-        )
-        self.async_write_ha_state()
 
     def _cancel_timer(self) -> None:
-        if self._remove_timer is not None:
-            self._remove_timer()
-            self._remove_timer = None
+        if self._remove_timer is None:
+            return
+        self._remove_timer()
+        self._remove_timer = None
+        _LOGGER.info(
+            "%s released — register %d set back to %.0f%% and no longer written",
+            self.name,
+            self._register,
+            self._inactive_value,
+        )
 
     def _schedule_write(self) -> None:
         if self._write_task is not None and not self._write_task.done():
@@ -305,7 +278,7 @@ class KostalSocLimitNumber(RestoreNumber):
 
     async def _async_write_limit(self) -> None:
         value = self._attr_native_value
-        if not self._armed or value is None:
+        if value is None:
             return
         try:
             await self._data.handler.write_float(self._register, float(value))
@@ -322,7 +295,6 @@ class KostalMinSocLimitNumber(KostalSocLimitNumber):
     _register = REG_BATTERY_MIN_SOC
     _data_attr = "min_soc"
     _inactive_value = DEFAULT_MIN_SOC_LIMIT
-    _arms_when_falling = True
     _attr_name = "Battery Minimum SOC Limit"
     _attr_icon = "mdi:battery-arrow-down-outline"
     _attr_native_min_value = MIN_SOC_LIMIT_RANGE[0]
@@ -336,7 +308,6 @@ class KostalMaxSocLimitNumber(KostalSocLimitNumber):
     _register = REG_BATTERY_MAX_SOC
     _data_attr = "max_soc"
     _inactive_value = DEFAULT_MAX_SOC_LIMIT
-    _arms_when_falling = False
     _attr_name = "Battery Maximum SOC Limit"
     _attr_icon = "mdi:battery-arrow-up-outline"
     _attr_native_min_value = MAX_SOC_LIMIT_RANGE[0]

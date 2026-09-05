@@ -268,19 +268,14 @@ DEFAULT_DISCHARGE_RATE = 100.0
 DEFAULT_FUSE_SIZE = 25.0  # Amps — old Kostal default; user should set to actual value
 
 # SOC limits. The bottom of the min range and the top of the max range are the
-# inverter's own built-in limits, so those values mean "not in use" — nothing is
-# written to registers 1042/1044 at all.
+# inverter's own built-in limits, so those values mean "not in use": the value
+# is written to register 1042/1044 once, so the release takes effect straight
+# away, and nothing is sent afterwards. Any other value is written continuously
+# for as long as it is set — see KostalSocLimitNumber in number.py.
 MIN_SOC_LIMIT_RANGE = (5.0, 99.0)
 MAX_SOC_LIMIT_RANGE = (50.0, 100.0)
 DEFAULT_MIN_SOC_LIMIT = MIN_SOC_LIMIT_RANGE[0]
 DEFAULT_MAX_SOC_LIMIT = MAX_SOC_LIMIT_RANGE[1]
-
-# Percent points before a SOC limit where the writes start. Arming a little
-# early makes sure the limit is already in effect at the inverter by the time
-# the battery reaches it — arming is only re-evaluated once per coordinator
-# poll, so the SoC can move a bit between checks. Doubles as the release band:
-# an armed limit is held until the SoC falls back past this same threshold.
-SOC_LIMIT_ARM_MARGIN = 2.0
 
 # EMS settings
 EMS_SAFETY_MARGIN = 0.90   # Trigger at 90% of fuse size

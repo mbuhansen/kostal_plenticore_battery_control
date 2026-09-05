@@ -6,7 +6,7 @@ This custom integration allows for advanced Battery control of Kostal Plenticore
 
 *   **External Battery Control:** Force charge or discharge your battery via Modbus.
 *   **Predbat Integration:** When [Predbat](https://springfall2008.github.io/batpred/) is installed and in an active control mode, `Charge Start` follows `predbat.best_charge_limit` and switches between charging, holding the SoC, and releasing the inverter automatically.
-*   **Battery SOC Limits:** Minimum and maximum SOC entities that only send to the inverter once the battery actually approaches the limit.
+*   **Battery SOC Limits:** Minimum and maximum SOC entities that hold the limit at the inverter for as long as it is set — cap the battery at 50% while you are away, or stop charging in the morning and raise the limit again later in the day.
 *   **Safety Limits:** Automatically reads the battery's current maximum Charge/Discharge limits (Registers 1076/1078) and clamps user values to ensure safety.
 *   **Mutually Exclusive Switches:** Smart logic ensures you cannot accidentally enable conflicting modes simultaneously.
 *   **Automatic Resume:** If Modbus communication drops while a control switch is on, the switch pauses instead of turning off and resumes by itself once the inverter is reachable again.
@@ -135,40 +135,42 @@ The EMS (Energy Management System) switch protects your house fuses during force
 *   **Set Charge Rate:** Target power (W) for forced charging. Automatically clamped to the battery's physical limit.
 *   **Set Discharge Rate:** Target power (W) for forced discharging. Automatically clamped to the battery's physical limit.
 *   **House Fuse Size** *(Configuration category)*: The size of your house fuses in Ampere (A). Used by EMS Grid Protection to calculate safe charge headroom.
-*   **Battery Minimum SOC Limit** *(disabled by default)*: 5–99%. `5` means not in use — that is the inverter's own minimum.
-*   **Battery Maximum SOC Limit** *(disabled by default)*: 50–100%. `100` means not in use — that is the inverter's own maximum.
+*   **Battery Minimum SOC Limit:** 5–99%. `5` means not in use — that is the inverter's own minimum.
+*   **Battery Maximum SOC Limit:** 50–100%. `100` means not in use — that is the inverter's own maximum.
 
-Both SOC limits are disabled in the entity registry out of the box; enable them on the device page to use them.
+Both SOC limits are enabled by default. Installations that predate this were shipped with them disabled
+in the entity registry, and that sticks across updates — if you do not see them on the device page,
+enable them there once.
 
 ### Battery SOC Limits
 
 Registers `1042`/`1044` are governed by the inverter's Modbus timeout: a limit is only in effect while
 it is actively being sent, and the inverter reverts to its own settings (minimum 5%, maximum 100%) as
-soon as the writes stop. The limits are therefore **not** written as soon as you set them — a limit
-*arms* 2 percentage points before the battery reaches it, so the inverter stays on its own control the
-rest of the time:
+soon as the writes stop. A limit that is in use is therefore written **continuously**, from the moment
+you set it, every `inverter timeout / 2` seconds (minimum 5s — the same cadence as the charge/discharge
+loops). Set the maximum to 50% and the inverter holds 50% for as long as the entity says 50%, whatever
+the battery is doing:
 
-*   **Maximum SOC** — with the limit at 90%, nothing is sent until the SoC reaches **88%**. From there
-    register `1044` is written repeatedly (every `inverter timeout / 2` seconds, minimum 5s — the same
-    cadence as the charge/discharge loops). The writes stop again when the SoC falls back below 88%.
-*   **Minimum SOC** — mirrored: with the limit at 20%, register `1042` starts being written once the
-    SoC drops to **22%**, and the writes stop once it rises back above 22%.
+*   **Maximum SOC** — `1044` is written from the moment the limit is set, whether the battery is at 20%
+    or already above the limit. Charging stops at the limit and stays stopped.
+*   **Minimum SOC** — mirrored on `1042`: discharging stops at the limit and stays stopped.
 
-The 2-point lead is `SOC_LIMIT_ARM_MARGIN` in `const.py`. It exists because arming is only re-evaluated
-once per coordinator poll (15s), so the limit needs to be in place at the inverter slightly before the
-battery arrives at it. It doubles as the release band, which keeps the writes from flapping on and off
-around the limit. Each limit entity exposes the resulting threshold as an `arms_at` attribute.
+Setting a limit back to `100` (maximum) or `5` (minimum) means "not in use": that value is written once,
+so the release takes effect immediately rather than after the inverter's timeout expires, and nothing is
+sent afterwards.
 
-No release value is ever written — the inverter's own timeout handles that. Measured on a Plenticore:
-writing `85` to the maximum SOC while the battery sat at 87% stopped charging right away, and the
-register went back to `100` by itself once the writes stopped. Sending the limits does not interfere
-with the charge/discharge switches handing control back to the inverter afterwards.
+Expect the inverter to taper charge/discharge power as the SoC approaches an active limit — that taper
+is the inverter enforcing the limit, and it is what makes "stop charging at 50%" hold. Earlier versions
+only started writing 2 percentage points before the limit to avoid it; that left the limit out of force
+the rest of the time, so a fast charge could sail straight past it ([#3](https://github.com/mbuhansen/kostal_plenticore_battery_control/issues/3)).
 
-Should the SoC still drift past the limit before a write lands, that is harmless: the inverter accepts
-a limit below the current SoC and stops charging immediately.
+Writing these registers this often does not wear the inverter: `1042`/`1044` are volatile Modbus process
+values guarded by the timeout, not stored settings — they revert on their own when the writes stop, which
+is exactly why they have to be repeated. Sending the limits does not interfere with the charge/discharge
+switches handing control back to the inverter afterwards.
 
 The `Battery Minimum SOC` / `Battery Maximum SOC` diagnostic sensors read the registers back if you
-want to watch this happen. Each limit entity also exposes an `armed` attribute.
+want to watch this happen. Each limit entity also exposes `active` and `writing` attributes.
 
 ### Sensors (Read-Only)
 
