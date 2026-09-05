@@ -12,6 +12,22 @@ class KostalModbusError(Exception):
 class KostalModbusConnectionError(KostalModbusError):
     """Raised when a Modbus operation cannot complete reliably."""
 
+
+class KostalModbusRequestError(KostalModbusError):
+    """Raised when the device answered, but refused the request.
+
+    The transport is healthy — the inverter replied with a Modbus exception
+    response saying it does not implement this address. Callers can treat the
+    register as absent instead of tearing the connection down.
+    """
+
+
+# Modbus exception codes that mean "this device has no such register", as
+# opposed to a transient device-side condition. Not every Plenticore implements
+# every documented register: PLENTICORE plus G1 answers code 2 for register 58,
+# which used to fail the whole update. See issues #4 and #5.
+MODBUS_UNSUPPORTED_EXCEPTION_CODES = frozenset({1, 2})  # illegal function, illegal data address
+
 class KostalModbusHandler:
     def __init__(self, host, port, unit_id):
         self._host = host
@@ -96,6 +112,13 @@ class KostalModbusHandler:
                 raise KostalModbusConnectionError(f"{description} failed: {err}") from err
 
             if result.isError():
+                exception_code = getattr(result, "exception_code", None)
+                if exception_code in MODBUS_UNSUPPORTED_EXCEPTION_CODES:
+                    # A well-formed reply saying the register does not exist.
+                    # The socket is fine, so keep it — closing here would drop a
+                    # healthy connection on every poll.
+                    self._logger.debug("Unsupported register during %s: %s", description, result)
+                    raise KostalModbusRequestError(f"{description} not supported: {result}")
                 self._logger.warning("Modbus error during %s: %s", description, result)
                 self._close_unlocked()
                 raise KostalModbusConnectionError(f"{description} failed: {result}")

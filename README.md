@@ -277,6 +277,22 @@ KSEM sensors are grouped under their own device, separate from the inverter.
 | `17` | ESB |
 | `18` | Unknown |
 
+### Unsupported Registers
+
+Not every Plenticore implements every register in KOSTAL's documentation. PLENTICORE plus G1, for
+example, answers `Illegal data address` for register `58` (overall software version) even though the
+register table lists it.
+
+An inverter that refuses a register is answering, not failing, so the connection is kept: the value is
+recorded as unavailable, an informational line is logged once, that register is skipped for as long as
+the integration runs, and every other entity keeps updating. Timeouts and dropped connections are
+unchanged — those still mark communication lost and trigger the automatic resume above.
+
+Earlier versions treated a refusal like a broken link, closed the connection and aborted the whole poll,
+so a single missing diagnostic register made *all* entities unavailable
+([#4](https://github.com/mbuhansen/kostal_plenticore_battery_control/issues/4),
+[#5](https://github.com/mbuhansen/kostal_plenticore_battery_control/issues/5)).
+
 ## Technical Details
 
 *   **Control Register:** `1028` (Hybrid) / `1030` (BI) — charge/discharge power as a signed percentage (negative = charge, positive = discharge). Selected by the inverter type chosen during setup.

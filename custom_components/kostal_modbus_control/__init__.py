@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import timedelta
+from functools import partial
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -76,7 +77,7 @@ from .const import (
     REG_KSEM_HOME_CONSUMPTION_FROM_BATTERY,
     REG_KSEM_HOME_CONSUMPTION_FROM_GRID,
 )
-from .modbus_handler import KostalModbusHandler
+from .modbus_handler import KostalModbusHandler, KostalModbusRequestError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -97,9 +98,44 @@ class KostalCoordinator(DataUpdateCoordinator[dict[Any, Any]]):
         )
         self._handler = handler
         self._kostal_data = kostal_data
+        # Registers this inverter answered "no such address" for. Not every
+        # Plenticore implements every documented register, so they are read
+        # once and then skipped for the life of the entry.
+        self._unsupported: set = set()
+
+    async def _read_optional(self, key, description, read):
+        """Read a register that some inverter models may not implement.
+
+        An "illegal data address" reply is the inverter telling us the register
+        does not exist on this firmware — record that, skip it from then on and
+        carry on with the rest of the update. Timeouts and transport errors are
+        left to propagate: those really do mean the inverter is unreachable.
+        """
+        if key in self._unsupported:
+            return None
+        try:
+            return await read()
+        except KostalModbusRequestError as err:
+            self._unsupported.add(key)
+            _LOGGER.info(
+                "This inverter does not implement %s — it will be skipped from now on (%s)",
+                description,
+                err,
+            )
+            return None
 
     async def _async_update_data(self) -> dict:
         try:
+            # First poll after an outage: re-probe everything. A register refused
+            # while the inverter was rebooting is not necessarily missing, and a
+            # transient must never disable an entity for the rest of the session.
+            # Costs one failed read per genuinely absent register per reconnect.
+            if not self._kostal_data.communication_ok and self._unsupported:
+                _LOGGER.debug(
+                    "Communication was lost — re-probing %d previously unsupported register(s)",
+                    len(self._unsupported),
+                )
+                self._unsupported.clear()
             data: dict = {}
             # Float registers (2 registers each)
             for address in (
@@ -125,26 +161,52 @@ class KostalCoordinator(DataUpdateCoordinator[dict[Any, Any]]):
                 REG_CURRENT_PHASE2,
                 REG_CURRENT_PHASE3,
             ):
-                data[address] = await self._handler.read_float(address)
-            # S16 register (1 register, signed int)
-            data[REG_BATTERY_POWER] = await self._handler.read_int16(REG_BATTERY_POWER)
-            # U8 registers
-            data[REG_SENSOR_TYPE] = await self._handler.read_uint8(REG_SENSOR_TYPE)
-            data[REG_BATTERY_MGMT_MODE] = await self._handler.read_uint8(REG_BATTERY_MGMT_MODE)
-            # U32 registers
-            data[REG_INVERTER_STATE] = await self._handler.read_uint32(REG_INVERTER_STATE)
-            # The battery info block is big-endian regardless of the inverter's
-            # byte-order setting, unlike the state register above
-            data[KEY_BATTERY_GROSS_CAPACITY] = await self._handler.read_uint32_big_endian(REG_BATTERY_GROSS_CAPACITY)
-            data[REG_BATTERY_MODEL_ID] = await self._handler.read_uint32_big_endian(REG_BATTERY_MODEL_ID)
-            data[REG_BATTERY_BMS_SERIAL] = await self._handler.read_uint32_big_endian(REG_BATTERY_BMS_SERIAL)
-            data[REG_BATTERY_FIRMWARE] = await self._handler.read_uint32_big_endian(REG_BATTERY_FIRMWARE)
-            # U16 register
-            data[REG_BATTERY_TYPE] = await self._handler.read_uint16(REG_BATTERY_TYPE)
-            # String register — byte order is fixed, no word swap involved
-            data[REG_SOFTWARE_VERSION] = await self._handler.read_string(
-                REG_SOFTWARE_VERSION, SOFTWARE_VERSION_LENGTH
-            )
+                data[address] = await self._read_optional(
+                    address,
+                    f"register {address}",
+                    partial(self._handler.read_float, address),
+                )
+            for key, description, read in (
+                # S16 register (1 register, signed int)
+                (REG_BATTERY_POWER, "battery power", partial(self._handler.read_int16, REG_BATTERY_POWER)),
+                # U8 registers
+                (REG_SENSOR_TYPE, "sensor type", partial(self._handler.read_uint8, REG_SENSOR_TYPE)),
+                (REG_BATTERY_MGMT_MODE, "battery management mode", partial(self._handler.read_uint8, REG_BATTERY_MGMT_MODE)),
+                # U32 register
+                (REG_INVERTER_STATE, "inverter state", partial(self._handler.read_uint32, REG_INVERTER_STATE)),
+                # The battery info block is big-endian regardless of the inverter's
+                # byte-order setting, unlike the state register above
+                (
+                    KEY_BATTERY_GROSS_CAPACITY,
+                    "battery gross capacity",
+                    partial(self._handler.read_uint32_big_endian, REG_BATTERY_GROSS_CAPACITY),
+                ),
+                (
+                    REG_BATTERY_MODEL_ID,
+                    "battery model ID",
+                    partial(self._handler.read_uint32_big_endian, REG_BATTERY_MODEL_ID),
+                ),
+                (
+                    REG_BATTERY_BMS_SERIAL,
+                    "battery BMS serial",
+                    partial(self._handler.read_uint32_big_endian, REG_BATTERY_BMS_SERIAL),
+                ),
+                (
+                    REG_BATTERY_FIRMWARE,
+                    "battery firmware",
+                    partial(self._handler.read_uint32_big_endian, REG_BATTERY_FIRMWARE),
+                ),
+                # U16 register
+                (REG_BATTERY_TYPE, "battery type", partial(self._handler.read_uint16, REG_BATTERY_TYPE)),
+                # String register — byte order is fixed, no word swap involved.
+                # PLENTICORE plus G1 does not implement this one at all.
+                (
+                    REG_SOFTWARE_VERSION,
+                    f"the software version register {REG_SOFTWARE_VERSION}",
+                    partial(self._handler.read_string, REG_SOFTWARE_VERSION, SOFTWARE_VERSION_LENGTH),
+                ),
+            ):
+                data[key] = await self._read_optional(key, description, read)
             # KSEM energy registers (separate handler, optional)
             ksem = self._kostal_data.ksem_handler
             if ksem is not None:
@@ -249,6 +311,20 @@ class KostalData:
                 handler()
 
 
+async def _read_optional_at_setup(read, description):
+    """Read an identity register, tolerating an inverter that lacks it.
+
+    Setup only reads diagnostics here and every caller already copes with None,
+    so a missing register must not stop the integration from loading. A real
+    connection problem still raises and lands as ConfigEntryNotReady.
+    """
+    try:
+        return await read()
+    except KostalModbusRequestError as err:
+        _LOGGER.info("This inverter does not implement %s: %s", description, err)
+        return None
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Kostal Modbus Control from a config entry."""
     hass.data.setdefault(DOMAIN, {})
@@ -266,15 +342,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except Exception as err:
         raise ConfigEntryNotReady(f"Cannot connect to Kostal inverter at {host}:{port}") from err
 
-    modbus_byte_order = await handler.read_uint16(REG_MODBUS_BYTE_ORDER)
+    modbus_byte_order = await _read_optional_at_setup(
+        partial(handler.read_uint16, REG_MODBUS_BYTE_ORDER), "the byte-order register"
+    )
     handler.set_modbus_byte_order(modbus_byte_order)
 
     # Read static string registers from inverter
-    inverter_model = await handler.read_string(REG_MODEL, 16) or ""
-    inverter_power_class = await handler.read_string(REG_POWER_CLASS, 16) or ""
+    inverter_model = await _read_optional_at_setup(
+        partial(handler.read_string, REG_MODEL, 16), "the model register"
+    ) or ""
+    inverter_power_class = await _read_optional_at_setup(
+        partial(handler.read_string, REG_POWER_CLASS, 16), "the power class register"
+    ) or ""
     _LOGGER.info("Inverter model=%r power_class=%r", inverter_model, inverter_power_class)
 
-    battery_type_raw = await handler.read_uint16(REG_BATTERY_TYPE)
+    battery_type_raw = await _read_optional_at_setup(
+        partial(handler.read_uint16, REG_BATTERY_TYPE), "the battery type register"
+    )
     battery_type_name = BATTERY_TYPE_MAP.get(battery_type_raw, f"Unknown (0x{battery_type_raw:04X})") if battery_type_raw is not None else None
 
     # Register device with static info (string registers are not reliable via Modbus on all firmware)
