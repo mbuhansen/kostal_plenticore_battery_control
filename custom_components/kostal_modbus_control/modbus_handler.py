@@ -1,4 +1,5 @@
 import logging
+import math
 import struct
 import asyncio
 import inspect
@@ -186,13 +187,23 @@ class KostalModbusHandler:
         return raw.decode("utf-8", errors="replace").strip("\x00")
 
     async def read_float(self, address):
-        """Reads a float (32-bit) from two 16-bit registers."""
+        """Reads a float (32-bit) from two 16-bit registers.
+
+        Returns None for NaN and infinity. Kostal reports a value it currently
+        does not have that way (e.g. battery work capacity on PLENTICORE plus
+        G1), and Home Assistant rejects non-finite numeric sensor states on
+        every update. See issue #6.
+        """
         result = await self._run_locked_request(
             f"read float from {address}",
             lambda: self._safe_read(address, 2),
         )
         raw = self._register_words_to_bytes(result.registers[0], result.registers[1])
-        return struct.unpack(">f", raw)[0]
+        value = struct.unpack(">f", raw)[0]
+        if not math.isfinite(value):
+            self._logger.debug("Non-finite float value from register %s: %s", address, value)
+            return None
+        return value
 
     async def read_int16(self, address):
         """Reads a signed 16-bit integer from one register."""
