@@ -698,7 +698,7 @@ class KostalBatteryFirmwareSensor(KostalBaseSensor):
 
 
 class KostalSoftwareVersionSensor(KostalBaseSensor):
-    """Overall software version (UI / SW) from register 58."""
+    """Overall software version (UI / SW) from register 58, or the REST API where that is missing."""
 
     _key = SENSOR_SOFTWARE_VERSION
     _name = "Software Version"

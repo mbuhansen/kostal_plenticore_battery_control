@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import timedelta
 from functools import partial
 from typing import Any
 
+import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -53,6 +56,9 @@ from .const import (
     REG_BATTERY_FIRMWARE,
     REG_SOFTWARE_VERSION,
     SOFTWARE_VERSION_LENGTH,
+    REST_VERSION_PATH,
+    REST_VERSION_TIMEOUT_SECONDS,
+    REST_VERSION_RETRY_SECONDS,
     BATTERY_TYPE_MAP,
     REG_BATTERY_MIN_SOC,
     REG_BATTERY_MAX_SOC,
@@ -89,7 +95,9 @@ class KostalCoordinator(DataUpdateCoordinator[dict[Any, Any]]):
     address — see KEY_BATTERY_GROSS_CAPACITY.
     """
 
-    def __init__(self, hass: HomeAssistant, handler: KostalModbusHandler, kostal_data: "KostalData") -> None:
+    def __init__(
+        self, hass: HomeAssistant, handler: KostalModbusHandler, kostal_data: "KostalData", host: str
+    ) -> None:
         super().__init__(
             hass,
             logging.getLogger(f"{__name__}.coordinator"),
@@ -102,6 +110,12 @@ class KostalCoordinator(DataUpdateCoordinator[dict[Any, Any]]):
         # Plenticore implements every documented register, so they are read
         # once and then skipped for the life of the entry.
         self._unsupported: set = set()
+        self._host = host
+        # Software version from the REST API, used only when register 58 is
+        # refused. Fetched once per connection — see _async_rest_software_version.
+        self._rest_version: str | None = None
+        self._rest_version_next_try = 0.0
+        self._rest_version_logged_failure = False
 
     async def _read_optional(self, key, description, read):
         """Read a register that some inverter models may not implement.
@@ -124,6 +138,48 @@ class KostalCoordinator(DataUpdateCoordinator[dict[Any, Any]]):
             )
             return None
 
+    async def _async_rest_software_version(self) -> str | None:
+        """UI software version from the inverter's REST API.
+
+        Only used when the inverter refuses register 58. The web API reports the
+        same version without logging in, and it only changes with a firmware
+        update — which restarts the inverter, i.e. a communication outage — so
+        it is fetched once per connection rather than on every poll. A failed
+        fetch is retried after REST_VERSION_RETRY_SECONDS, and the last known
+        version is kept in the meantime.
+        """
+        now = time.monotonic()
+        if now < self._rest_version_next_try:
+            return self._rest_version
+        url = f"http://{self._host}{REST_VERSION_PATH}"
+        try:
+            session = async_get_clientsession(self.hass)
+            async with session.get(
+                url, timeout=aiohttp.ClientTimeout(total=REST_VERSION_TIMEOUT_SECONDS)
+            ) as response:
+                response.raise_for_status()
+                payload = await response.json(content_type=None)
+            version = payload.get("sw_version") if isinstance(payload, dict) else None
+            if not version:
+                raise ValueError(f"no sw_version in {payload!r}")
+        except Exception as err:
+            self._rest_version_next_try = now + REST_VERSION_RETRY_SECONDS
+            log = _LOGGER.debug if self._rest_version_logged_failure else _LOGGER.info
+            log(
+                "Could not read the software version from %s, retrying later: %s %s",
+                url,
+                type(err).__name__,
+                err,
+            )
+            self._rest_version_logged_failure = True
+            return self._rest_version
+
+        self._rest_version = str(version).strip()
+        self._rest_version_next_try = float("inf")
+        self._rest_version_logged_failure = False
+        _LOGGER.debug("Software version %s read from %s", self._rest_version, url)
+        return self._rest_version
+
     async def _async_update_data(self) -> dict:
         try:
             # First poll after an outage: re-probe everything. A register refused
@@ -136,6 +192,10 @@ class KostalCoordinator(DataUpdateCoordinator[dict[Any, Any]]):
                     len(self._unsupported),
                 )
                 self._unsupported.clear()
+            if not self._kostal_data.communication_ok:
+                # A firmware update restarts the inverter, so fetch the REST
+                # version again once the connection is back
+                self._rest_version_next_try = 0.0
             data: dict = {}
             # Float registers (2 registers each)
             for address in (
@@ -207,6 +267,8 @@ class KostalCoordinator(DataUpdateCoordinator[dict[Any, Any]]):
                 ),
             ):
                 data[key] = await self._read_optional(key, description, read)
+            if REG_SOFTWARE_VERSION in self._unsupported:
+                data[REG_SOFTWARE_VERSION] = await self._async_rest_software_version()
             # KSEM energy registers (separate handler, optional)
             ksem = self._kostal_data.ksem_handler
             if ksem is not None:
@@ -405,7 +467,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         ksem_handler=ksem_handler,
     )
 
-    coordinator = KostalCoordinator(hass, handler, data)
+    coordinator = KostalCoordinator(hass, handler, data, host)
     # Use hass.async_create_background_task for broad HA version compatibility
     hass.async_create_background_task(
         coordinator.async_refresh(),

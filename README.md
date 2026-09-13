@@ -206,7 +206,7 @@ Enable these on the device page when you need them:
 | Battery Gross Capacity | Ah | Gross battery capacity |
 | Battery Management Mode | — | Register 1080 mapped to text — must be "External battery management via Modbus protocol" for control to work |
 | Battery Firmware | — | Battery firmware version |
-| Software Version | — | Overall inverter software version (UI / SW) from register 58 |
+| Software Version | — | Overall inverter software version (UI / SW) from register 58. On inverters without that register it is read from the inverter's web API instead — see Unsupported Registers |
 | Battery BMS Serial Number | — | Battery BMS serial |
 | Battery Model ID | — | Raw battery model ID |
 | Battery Minimum SOC / Battery Maximum SOC | % | Read-back of registers 1042 / 1044 |
@@ -287,6 +287,14 @@ An inverter that refuses a register is answering, not failing, so the connection
 recorded as unavailable, an informational line is logged once, that register is skipped for as long as
 the integration runs, and every other entity keeps updating. Timeouts and dropped connections are
 unchanged — those still mark communication lost and trigger the automatic resume above.
+
+The one exception is register `58`. Where it is missing, the `Software Version` sensor falls back to
+the inverter's web API, `http://<inverter>/api/v1/info/version`, which reports the same UI version
+without logging in (a G3 returns `3.07.00.25886` from both; a PLENTICORE plus G1 returns `01.30.12092`
+from the web API only). It is fetched when the integration starts and again after every communication
+outage — a firmware update restarts the inverter, so a new version is picked up by itself. If the web
+API cannot be reached the sensor stays unknown, is retried every 10 minutes, and nothing else is
+affected. Inverters that do implement register `58` never make this request.
 
 Earlier versions treated a refusal like a broken link, closed the connection and aborted the whole poll,
 so a single missing diagnostic register made *all* entities unavailable

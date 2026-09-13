@@ -20,6 +20,12 @@ REG_POWER_CLASS = 800         # Power class e.g. "10" (String 32)
 REG_SERIAL = 559              # Inverter Serial Number (String 16)
 REG_SOFTWARE_VERSION = 58     # Overall software version (UI / SW) - String 13 (0x3A)
 SOFTWARE_VERSION_LENGTH = 13  # Registers, per the Kostal register table
+# Fallback for inverters without register 58 (PLENTICORE plus G1): the web
+# API reports the same UI version without logging in. On a G3 both sources
+# return 3.07.00.25886; a G1 answers 01.30.12092 here and nothing over Modbus.
+REST_VERSION_PATH = "/api/v1/info/version"
+REST_VERSION_TIMEOUT_SECONDS = 10
+REST_VERSION_RETRY_SECONDS = 600  # After a failed fetch, e.g. web server still starting
 REG_INVERTER_STATE = 56       # Inverter state - U32 (0x38)
 REG_CHARGE_DISCHARGE_LIMIT = 1028      # Hybrid: Controls max charge/discharge power (%)
 REG_CHARGE_DISCHARGE_LIMIT_BI = 1030   # BI: Controls max charge/discharge power (%)
