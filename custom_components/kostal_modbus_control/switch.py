@@ -10,7 +10,11 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.event import (
+    async_call_later,
+    async_track_state_change_event,
+    async_track_time_interval,
+)
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.const import EntityCategory
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -18,6 +22,8 @@ from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import (
     DOMAIN,
+    GRID_CONTROL_LOOP_INTERVAL,
+    GRID_CONTROL_MIN_UPDATE_SECONDS,
     LOOP_INTERVAL,
     PREDBAT_CHARGE_START_DELTA,
     PREDBAT_HOLD_DELTA,
@@ -42,6 +48,7 @@ from .const import (
     SWITCH_BLOCK_DISCHARGE,
     SWITCH_DISCHARGE_START,
     SWITCH_EMS,
+    SWITCH_INVERTER_CONTROL,
     SWITCH_IO_OUTPUT_1,
     PREDBAT_MODE_ENTITY,
     PREDBAT_ACTIVE_MODES,
@@ -59,6 +66,7 @@ from .const import (
     EMS_SAFETY_MARGIN,
     EMS_PHASE_VOLTAGE,
     SIGNAL_EMS_STATUS_UPDATED,
+    SIGNAL_INVERTER_CONTROL_UPDATED,
     SIGNAL_PREDBAT_STATUS_UPDATED,
 )
 from .modbus_handler import KostalModbusHandler
@@ -104,6 +112,10 @@ async def async_setup_entry(
         block_discharge_switch,
         block_charge_switch,
     ]
+    inverter_control_switch = None
+    if data.source_grid_power_entity:
+        inverter_control_switch = KostalInverterControlSwitch(data, entry.entry_id)
+        exclusive_switches.append(inverter_control_switch)
     for switch in exclusive_switches:
         switch.set_related_switches(exclusive_switches)
 
@@ -119,6 +131,8 @@ async def async_setup_entry(
         KostalIOOutputSwitch(data, entry.entry_id, SWITCH_IO_OUTPUT_3, "I/O Output 3", REG_IO_OUTPUT_3),
         KostalIOOutputSwitch(data, entry.entry_id, SWITCH_IO_OUTPUT_4, "I/O Output 4", REG_IO_OUTPUT_4),
     ]
+    if inverter_control_switch is not None:
+        entities.append(inverter_control_switch)
     async_add_entities(entities)
 
 class KostalBaseSwitch(SwitchEntity):
@@ -154,6 +168,12 @@ class KostalBaseSwitch(SwitchEntity):
 
     def set_related_switches(self, switches):
         self._related_switches = switches
+
+    async def async_will_remove_from_hass(self) -> None:
+        # Stop the write loop on unload/reload — otherwise the removed entity
+        # keeps writing through the handler, which reconnects by itself
+        self._cancel_start_task()
+        self._cancel_loop_timer()
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -1176,6 +1196,239 @@ class KostalEMSSwitch(KostalBaseSwitch, RestoreEntity):
 
     def _on_communication_fault(self) -> None:
         self._ems_smoothed_limit = None
+
+
+class KostalInverterControlSwitch(KostalBaseSwitch, RestoreEntity):
+    """Trim grid import/export from an external Home Assistant grid-power entity.
+
+    Meant for inverters without a smart meter. The entity must read positive
+    while importing from the grid and negative while exporting.
+    """
+
+    _key = SWITCH_INVERTER_CONTROL
+    _name = "Inverter Control"
+    _auto_resume_on_recovery = True
+
+    def __init__(self, data, entry_id):
+        super().__init__(data, entry_id)
+        # The timer is only the fallback; normally a new grid reading triggers
+        # the calculation (see _handle_grid_update)
+        self._loop_interval = GRID_CONTROL_LOOP_INTERVAL
+        self._unsub_grid_listener = None
+        self._cancel_deferred_update = None
+        self._last_calculation = 0.0
+        self._calculation_lock = asyncio.Lock()
+
+    def _start_periodic_loop(self) -> None:
+        super()._start_periodic_loop()
+        entity_id = self._data.source_grid_power_entity
+        if entity_id:
+            self._unsub_grid_listener = async_track_state_change_event(
+                self.hass, [entity_id], self._handle_grid_update
+            )
+
+    def _cancel_loop_timer(self) -> None:
+        super()._cancel_loop_timer()
+        if self._unsub_grid_listener is not None:
+            self._unsub_grid_listener()
+            self._unsub_grid_listener = None
+        if self._cancel_deferred_update is not None:
+            self._cancel_deferred_update()
+            self._cancel_deferred_update = None
+
+    @callback
+    def _handle_grid_update(self, event) -> None:
+        """Recalculate on every new grid reading, at most once per GRID_CONTROL_MIN_UPDATE_SECONDS."""
+        if self._remove_timer is None or self._cancel_deferred_update is not None:
+            return
+        wait = GRID_CONTROL_MIN_UPDATE_SECONDS - (time.monotonic() - self._last_calculation)
+        if wait > 0:
+            # Too soon — run once the interval has passed, with the newest reading
+            self._cancel_deferred_update = async_call_later(self.hass, wait, self._async_deferred_update)
+            return
+        self.hass.async_create_task(self._async_grid_update_tick())
+
+    async def _async_deferred_update(self, _now) -> None:
+        self._cancel_deferred_update = None
+        await self._async_grid_update_tick()
+
+    async def _async_grid_update_tick(self) -> None:
+        # The loop may have been stopped between scheduling and running
+        if self._remove_timer is None:
+            return
+        await self._async_handle_loop_tick()
+
+    def _publish_state(
+        self,
+        status: str,
+        *,
+        target_watts: float | None = None,
+        target_pct: float | None = None,
+        house_load_w: float | None = None,
+    ) -> None:
+        self._data.inverter_control_status = status
+        self._data.inverter_control_target_w = target_watts
+        self._data.inverter_control_target_pct = target_pct
+        self._data.inverter_control_house_load_w = house_load_w
+        async_dispatcher_send(self.hass, f"{SIGNAL_INVERTER_CONTROL_UPDATED}_{self._entry_id}")
+
+    async def async_added_to_hass(self) -> None:
+        """Restore inverter control state after HA restart."""
+        last = await self.async_get_last_state()
+        if last is not None:
+            self._attr_is_on = last.state == "on"
+
+        if self._attr_is_on:
+            self._schedule_start_loop("state restore")
+
+        self.async_write_ha_state()
+
+    def _get_float_state(self, entity_id: str | None) -> float | None:
+        if not entity_id:
+            return None
+        state = self.hass.states.get(entity_id)
+        if state is None or state.state in {"unknown", "unavailable", "none", "None"}:
+            return None
+        try:
+            return float(state.state)
+        except (TypeError, ValueError):
+            return None
+
+    def _grid_inputs(self, battery_power: int | None) -> dict[str, float] | None:
+        coordinator = self._data.coordinator
+        if coordinator is None or coordinator.data is None:
+            _LOGGER.debug("Inverter Control: no coordinator data available")
+            return None
+
+        soc = coordinator.data.get(REG_BATTERY_SOC)
+        raw_grid_power = self._get_float_state(self._data.source_grid_power_entity)
+
+        if soc is None or battery_power is None or raw_grid_power is None:
+            _LOGGER.debug(
+                "Inverter Control: insufficient control data soc=%s battery_power=%s grid_power=%s",
+                soc,
+                battery_power,
+                raw_grid_power,
+            )
+            return None
+
+        # The grid reading already includes what the battery delivers, so add
+        # the battery power back to get the house load the battery must cover.
+        # Battery power is positive while discharging, negative while charging.
+        house_load = float(raw_grid_power) + float(battery_power)
+        alpha = self._data.external_control_ema_alpha
+        previous_filtered = self._data.last_inverter_control_filtered_load_w
+        if previous_filtered is None:
+            filtered_house_load = house_load
+        else:
+            filtered_house_load = alpha * house_load + (1 - alpha) * previous_filtered
+        self._data.last_inverter_control_filtered_load_w = filtered_house_load
+
+        return {
+            "raw_grid_power": float(raw_grid_power),
+            "battery_power": float(battery_power),
+            "filtered_house_load": filtered_house_load,
+        }
+
+    def _clamp_target_watts(self, target_watts: float) -> float:
+        if target_watts > 0.0:
+            discharge_cap = min(self._data.external_control_max_discharge_w, self._max_discharge_watts())
+            return min(target_watts, max(0.0, discharge_cap))
+        charge_cap = min(self._data.external_control_max_charge_w, self._max_charge_watts())
+        return max(target_watts, -max(0.0, charge_cap))
+
+    def _grid_target_watts(self, inputs: dict[str, float]) -> tuple[float, str]:
+        """Return the signed battery target (+ discharge, - charge) and a status."""
+        filtered_house_load = inputs["filtered_house_load"]
+        # Grid power as it would read with the smoothed load and today's battery output
+        grid_error = filtered_house_load - inputs["battery_power"] - self._data.grid_target_w
+
+        if abs(grid_error) <= self._data.grid_deadband_w:
+            # Close enough — keep the battery where it is instead of dropping to 0,
+            # which would just push the grid back out of the deadband
+            last_target = self._data.last_inverter_control_setpoint_w
+            held = inputs["battery_power"] if last_target is None else last_target
+            return self._clamp_target_watts(held), "Grid Idle"
+
+        return self._clamp_target_watts(filtered_house_load - self._data.grid_target_w), "Grid Support"
+
+    def _smoothed_target_watts(self, proposed_watts: float) -> float:
+        """Only move the setpoint when it changes by more than the hysteresis."""
+        last_target = self._data.last_inverter_control_setpoint_w
+        if last_target is None or abs(proposed_watts - last_target) > self._data.external_control_hysteresis_w:
+            self._data.last_inverter_control_setpoint_w = proposed_watts
+            return proposed_watts
+        return last_target
+
+    def _pct_from_target_watts(self, target_watts: float) -> float:
+        if target_watts > 0.0:
+            max_discharge_watts = self._max_discharge_watts()
+            if max_discharge_watts <= 0.0:
+                return 0.0
+            return round(min(100.0, (target_watts / max_discharge_watts) * 100.0), 1)
+        if target_watts < 0.0:
+            max_charge_watts = self._max_charge_watts()
+            if max_charge_watts <= 0.0:
+                return 0.0
+            return -round(min(100.0, (-target_watts / max_charge_watts) * 100.0), 1)
+        return 0.0
+
+    async def _loop_action(self, *args):
+        if not self._attr_is_on:
+            return
+        # A grid update and the fallback timer can fire together — one
+        # calculation at a time is enough
+        if self._calculation_lock.locked():
+            return
+        async with self._calculation_lock:
+            self._last_calculation = time.monotonic()
+            await self._calculate_and_write()
+
+    async def _calculate_and_write(self) -> None:
+        # Read battery power fresh on every calculation. The coordinator only
+        # refreshes it every LOOP_INTERVAL seconds, and a stale value next to a
+        # fresh grid reading gives a wrong house load.
+        battery_power = await self._data.handler.read_int16(REG_BATTERY_POWER)
+        inputs = self._grid_inputs(battery_power)
+        if inputs is None:
+            self._publish_state("Unavailable")
+            await self._data.handler.write_float(self._data.charge_discharge_reg, 0.0)
+            return
+
+        filtered_house_load = inputs["filtered_house_load"]
+        proposed_watts, status = self._grid_target_watts(inputs)
+        target_watts = self._smoothed_target_watts(proposed_watts)
+        target_pct = self._pct_from_target_watts(target_watts)
+        self._publish_state(
+            status,
+            target_watts=target_watts,
+            target_pct=target_pct,
+            house_load_w=filtered_house_load,
+        )
+        _LOGGER.debug(
+            "Inverter Control: raw_grid=%.1fW battery=%.1fW filtered_load=%.1fW grid_target=%.1fW proposed=%.1fW target=%.1fW target_pct=%s%% status=%s",
+            inputs["raw_grid_power"],
+            inputs["battery_power"],
+            filtered_house_load,
+            self._data.grid_target_w,
+            proposed_watts,
+            target_watts,
+            target_pct,
+            status,
+        )
+        await self._data.handler.write_float(self._data.charge_discharge_reg, target_pct)
+
+    async def _stop_action(self):
+        self._data.last_stop_time = time.time()
+        await self._data.handler.write_float(self._data.charge_discharge_reg, 0.0)
+        self._data.last_inverter_control_setpoint_w = None
+        self._data.last_inverter_control_filtered_load_w = None
+        self._publish_state("Inactive")
+        await self._data.handler.close()
+
+    def _on_communication_fault(self) -> None:
+        self._data.last_inverter_control_setpoint_w = None
+        self._publish_state("Unavailable")
 
 
 class KostalIOOutputSwitch(SwitchEntity, RestoreEntity):

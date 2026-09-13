@@ -12,6 +12,7 @@ This custom integration allows for advanced Battery control of Kostal Plenticore
 *   **Automatic Resume:** If Modbus communication drops while a control switch is on, the switch pauses instead of turning off and resumes by itself once the inverter is reachable again.
 *   **EMS Grid Protection:** Dynamic charge control that monitors all three grid phase currents and automatically reduces charge power to prevent fuses from tripping.
 *   **Smart Meter Detection:** EMS Protection can only be enabled when a supported smart meter is connected.
+*   **Grid Control Without a Smart Meter:** Pick any Home Assistant grid-power entity and the battery charges or discharges to keep grid import/export near a target.
 *   **KSEM Support:** Optional direct Modbus connection to a KOSTAL Smart Energy Meter for energy and power-flow sensors.
 *   **I/O Board Outputs:** Direct control of the inverter's four switched outputs.
 *   **Configurable Rates:** Set your desired Charge/Discharge wattage directly from Home Assistant.
@@ -61,8 +62,9 @@ In the first two modes the inverter **silently ignores** every write — the swi
         *   **Plenticore BI / Battery Inverter** — charge/discharge power is controlled through register `1026` (battery AC power setpoint in W). Not yet tested on a BI.
 5.  If battery management is not set to Modbus, a warning screen appears explaining what to change in the Inverter Web UI. Setup continues when you submit it.
 6.  If the inverter reports a **KOSTAL Smart Energy Meter** as its connected meter (sensor type `0x03`), a second step offers to add the KSEM's IP address. This is optional — leave it empty to skip. With it configured, the integration opens a second Modbus connection to the KSEM (port `502`, unit ID `1`) and adds the energy and power-flow sensors listed below.
+7.  If the inverter reports **no smart meter** (sensor type `0xFF`, or the register cannot be read), a step offers to pick a Home Assistant **grid power entity** instead. This is optional — leave it empty to skip, and the charge/discharge switches work as usual. See [Grid Control Without a Smart Meter](#grid-control-without-a-smart-meter).
 
-There are no options to configure after setup; everything else is controlled through entities.
+After setup, **Configure** on the integration holds the grid control options: the grid power entity and its tuning values. Everything else is controlled through entities.
 
 ## Entities Explained
 
@@ -73,7 +75,9 @@ There are no options to configure after setup; everything else is controlled thr
 *   **Block Charge:** Prevents the battery from charging (sets charge rate to 0). Restores the configured rate when turned off.
 *   **Block Discharge:** Prevents the battery from discharging (sets discharge rate to 0). Restores the configured rate when turned off.
 
-*Note: These four switches are mutually exclusive. Turning one ON will automatically turn the others OFF.*
+*   **Inverter Control** *(only while a grid power entity is configured)*: Trims grid import/export from the external grid entity. See [Grid Control Without a Smart Meter](#grid-control-without-a-smart-meter).
+
+*Note: These switches are mutually exclusive. Turning one ON will automatically turn the others OFF.*
 
 *   **EMS Grid Protection** *(Configuration category)*: Dynamically adjusts charge power every poll cycle to keep all three grid phase currents below the configured fuse size. See below for details.
 *   **I/O Output 1–4** *(disabled by default)*: Direct on/off control of the inverter's I/O board outputs (registers `608`–`611`). Writes `1` when turned on and `0` when turned off, and restores its last state after a Home Assistant restart.
@@ -82,7 +86,7 @@ Each control switch exposes `faulted`, `resume_pending`, `loop_running` and `aut
 
 ### Automatic Resume After Communication Loss
 
-While a control switch is on, the integration keeps writing to the inverter at half the configured Modbus timeout to hold the session open. If a write fails, `Charge Start`, `Discharge Start`, `Block Charge` and `Block Discharge` do **not** turn themselves off. Instead they:
+While a control switch is on, the integration keeps writing to the inverter at half the configured Modbus timeout to hold the session open. If a write fails, `Charge Start`, `Discharge Start`, `Block Charge`, `Block Discharge` and `Inverter Control` do **not** turn themselves off. Instead they:
 
 1.  Stop the write loop and mark themselves `faulted`, with `resume_pending` set.
 2.  Close the Modbus connection so the next attempt reconnects cleanly.
@@ -129,6 +133,46 @@ The EMS (Energy Management System) switch protects your house fuses during force
 | 0x01 | B-Control EM-300 LR (TQ Systems) |
 | 0x03 | KOSTAL Smart Energy Meter (KOSTAL) |
 | 0xFF | No sensor |
+
+### Grid Control Without a Smart Meter
+
+Without a smart meter the inverter cannot see grid import and export, so its own self-consumption control does not work. The **Inverter Control** switch fills that gap using a grid power entity you already have in Home Assistant, for example from a P1 reader, a Shelly EM or your utility meter.
+
+**Requirements:**
+- A Home Assistant `sensor`, `number` or `input_number` measuring grid power in **W** at the connection point: **positive while importing, negative while exporting**. If yours is the other way round, wrap it in a template sensor that inverts the sign.
+- Set during setup when no smart meter is detected, or at any time under **Configure**. With a smart meter connected the option is still available for testing, and the form shows a note.
+
+**How it works** (while the switch is on):
+- The setpoint is recalculated every time the grid entity reports a new value, at most once per second, and at least every 5 seconds if the entity stops updating. How fast the control can react therefore depends on how often your grid entity updates.
+- Each calculation reads the battery power (register `582`) directly from the inverter, so the grid reading and the battery reading are from the same moment.
+- The grid reading plus the battery power gives the house load the battery has to cover. PV surplus makes it negative. This load is smoothed with an exponential moving average.
+- The battery setpoint is the smoothed load minus **Grid target**: a positive load → discharge, a negative load (surplus) → charge.
+- While the grid is within **Grid deadband** of the target, the battery keeps its current setpoint (`Grid Idle`).
+- The setpoint is capped by **Max discharge / Max charge power** and by the battery's own limits (registers `1078`/`1076`), then written as a percentage to the charge/discharge register (`1028` or `1030`).
+- The written setpoint only changes when the new value differs by more than **Setpoint hysteresis**, so the inverter is not chased by small fluctuations.
+- If the grid entity or the battery data is unavailable, `0` is written and the status is `Unavailable`.
+- When the switch is turned off, `0` is written and the inverter falls back to its internal control after its Modbus timeout.
+
+**Options:**
+| Option | Default | Description |
+|---|---|---|
+| Grid power entity | — | Source of the grid measurement. Clearing it removes the switch and its sensors. |
+| Grid target | 0 W | Grid power to regulate towards. |
+| Grid deadband | 50 W | The setpoint is held while the grid is within this distance of the target. |
+| Max discharge power | 5000 W | Upper limit for discharging. |
+| Max charge power | 5000 W | Upper limit for charging. |
+| Setpoint hysteresis | 50 W | Minimum change before a new setpoint is used. |
+| Load smoothing | 0.3 | EMA alpha per calculation, 0.05–1: `1` = raw value, lower = smoother but slower. |
+
+Deadband, hysteresis and smoothing work together: the grid settles within roughly the larger of deadband and hysteresis. Going much below 50 W, or raising smoothing to `1` on a noisy grid entity, makes the battery setpoint hunt back and forth.
+
+**Diagnostic sensors:**
+| Sensor | Description |
+|---|---|
+| Inverter Control Status | `Inactive`, `Grid Support`, `Grid Idle` or `Unavailable` |
+| Inverter Control Target Power | Current battery setpoint in W (+ discharge, − charge) |
+| Inverter Control Target Percent | The setpoint as written to the register |
+| Inverter Control House Load | The smoothed house load (grid + battery) the control regulates on |
 
 ### Numbers (Settings)
 

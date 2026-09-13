@@ -106,7 +106,12 @@ from .const import (
     SENSOR_INVERTER_STATE,
     SENSOR_INVERTER_STATE_TEXT,
     SENSOR_TYPE_MAP,
+    SENSOR_INVERTER_CONTROL_STATUS,
+    SENSOR_INVERTER_CONTROL_TARGET_POWER,
+    SENSOR_INVERTER_CONTROL_TARGET_PERCENT,
+    SENSOR_INVERTER_CONTROL_HOUSE_LOAD,
     SIGNAL_EMS_STATUS_UPDATED,
+    SIGNAL_INVERTER_CONTROL_UPDATED,
     SIGNAL_PREDBAT_STATUS_UPDATED,
     SENSOR_PREDBAT_MODE,
     PREDBAT_MODE_ENTITY,
@@ -210,6 +215,15 @@ async def async_setup_entry(
         entities.append(KostalBatteryAcPowerSetpointSensor(coordinator, entry.entry_id))
     else:
         entities.append(KostalBatteryDcPowerSetpointSensor(coordinator, entry.entry_id))
+
+    # Inverter Control sensors — only while a grid entity is selected
+    if data.source_grid_power_entity:
+        entities.extend([
+            KostalInverterControlStatusSensor(data, entry.entry_id),
+            KostalInverterControlTargetPowerSensor(data, entry.entry_id),
+            KostalInverterControlTargetPercentSensor(data, entry.entry_id),
+            KostalInverterControlHouseLoadSensor(data, entry.entry_id),
+        ])
 
     async_add_entities(entities)
 
@@ -551,6 +565,89 @@ class KostalEMSChargeLimitSensor(SensorEntity):
     @callback
     def _handle_status_update(self, status: str) -> None:
         self.async_write_ha_state()
+
+
+class KostalInverterControlBaseSensor(SensorEntity):
+    """Base for the sensors that show what the Inverter Control switch is doing."""
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, data, entry_id: str, key: str, name: str) -> None:
+        self._data = data
+        self._entry_id = entry_id
+        self._attr_unique_id = f"{entry_id}_{key}"
+        self._attr_name = name
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(identifiers={(DOMAIN, self._entry_id)})
+
+    async def async_added_to_hass(self) -> None:
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass,
+                f"{SIGNAL_INVERTER_CONTROL_UPDATED}_{self._entry_id}",
+                self._handle_control_update,
+            )
+        )
+
+    @callback
+    def _handle_control_update(self) -> None:
+        self.async_write_ha_state()
+
+
+class KostalInverterControlStatusSensor(KostalInverterControlBaseSensor):
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = ["Inactive", "Unavailable", "Grid Support", "Grid Idle"]
+
+    def __init__(self, data, entry_id: str) -> None:
+        super().__init__(data, entry_id, SENSOR_INVERTER_CONTROL_STATUS, "Inverter Control Status")
+
+    @property
+    def native_value(self) -> str:
+        return self._data.inverter_control_status
+
+
+class KostalInverterControlTargetPowerSensor(KostalInverterControlBaseSensor):
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, data, entry_id: str) -> None:
+        super().__init__(data, entry_id, SENSOR_INVERTER_CONTROL_TARGET_POWER, "Inverter Control Target Power")
+
+    @property
+    def native_value(self) -> float | None:
+        return self._data.inverter_control_target_w
+
+
+class KostalInverterControlTargetPercentSensor(KostalInverterControlBaseSensor):
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, data, entry_id: str) -> None:
+        super().__init__(data, entry_id, SENSOR_INVERTER_CONTROL_TARGET_PERCENT, "Inverter Control Target Percent")
+
+    @property
+    def native_value(self) -> float | None:
+        return self._data.inverter_control_target_pct
+
+
+class KostalInverterControlHouseLoadSensor(KostalInverterControlBaseSensor):
+    """Smoothed grid power plus battery power — the load the control regulates on."""
+
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, data, entry_id: str) -> None:
+        super().__init__(data, entry_id, SENSOR_INVERTER_CONTROL_HOUSE_LOAD, "Inverter Control House Load")
+
+    @property
+    def native_value(self) -> float | None:
+        return self._data.inverter_control_house_load_w
 
 
 class KostalPredbatStatusSensor(SensorEntity):

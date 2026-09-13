@@ -89,6 +89,20 @@ from .const import (
     REG_KSEM_HOME_CONSUMPTION_FROM_PV,
     REG_KSEM_HOME_CONSUMPTION_FROM_BATTERY,
     REG_KSEM_HOME_CONSUMPTION_FROM_GRID,
+    CONF_SOURCE_GRID_POWER_ENTITY,
+    CONF_GRID_TARGET_W,
+    CONF_GRID_DEADBAND_W,
+    CONF_EXTERNAL_CONTROL_MAX_DISCHARGE_W,
+    CONF_EXTERNAL_CONTROL_MAX_CHARGE_W,
+    CONF_EXTERNAL_CONTROL_HYSTERESIS_W,
+    CONF_EXTERNAL_CONTROL_EMA_ALPHA,
+    DEFAULT_GRID_TARGET_W,
+    DEFAULT_GRID_DEADBAND_W,
+    DEFAULT_EXTERNAL_CONTROL_MAX_DISCHARGE_W,
+    DEFAULT_EXTERNAL_CONTROL_MAX_CHARGE_W,
+    DEFAULT_EXTERNAL_CONTROL_HYSTERESIS_W,
+    DEFAULT_EXTERNAL_CONTROL_EMA_ALPHA,
+    MIN_EXTERNAL_CONTROL_EMA_ALPHA,
 )
 from .modbus_handler import KostalModbusHandler, KostalModbusRequestError
 
@@ -359,6 +373,20 @@ class KostalData:
     ksem_handler: KostalModbusHandler | None = None
     runtime_switches: dict[str, Any] = field(default_factory=dict)
     resume_pending_switches: set[str] = field(default_factory=set)
+    # Grid control from an external grid-power entity (options flow)
+    source_grid_power_entity: str | None = None
+    grid_target_w: float = DEFAULT_GRID_TARGET_W
+    grid_deadband_w: float = DEFAULT_GRID_DEADBAND_W
+    external_control_max_discharge_w: float = DEFAULT_EXTERNAL_CONTROL_MAX_DISCHARGE_W
+    external_control_max_charge_w: float = DEFAULT_EXTERNAL_CONTROL_MAX_CHARGE_W
+    external_control_hysteresis_w: float = DEFAULT_EXTERNAL_CONTROL_HYSTERESIS_W
+    external_control_ema_alpha: float = DEFAULT_EXTERNAL_CONTROL_EMA_ALPHA
+    last_inverter_control_setpoint_w: float | None = None
+    last_inverter_control_filtered_load_w: float | None = None
+    inverter_control_status: str = "Inactive"
+    inverter_control_target_w: float | None = None
+    inverter_control_target_pct: float | None = None
+    inverter_control_house_load_w: float | None = None
 
     def register_runtime_switch(self, switch: Any) -> None:
         self.runtime_switches[switch._key] = switch
@@ -654,12 +682,53 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "kostal_modbus_initial_refresh",
     )
     data.coordinator = coordinator
+    _apply_grid_control_options(entry.options, data)
 
     hass.data[DOMAIN][entry.entry_id] = data
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
+    entry.async_on_unload(entry.add_update_listener(_async_options_update_listener))
+
     return True
+
+
+async def _async_options_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Apply changed options.
+
+    The Inverter Control switch and its sensors only exist while a grid entity
+    is selected, so adding or removing it needs a reload. Tuning changes are
+    applied to the running loop directly.
+    """
+    data: KostalData = hass.data[DOMAIN][entry.entry_id]
+    new_entity = entry.options.get(CONF_SOURCE_GRID_POWER_ENTITY) or None
+    if bool(new_entity) != bool(data.source_grid_power_entity):
+        await hass.config_entries.async_reload(entry.entry_id)
+        return
+    _apply_grid_control_options(entry.options, data)
+
+
+def _apply_grid_control_options(options: Any, data: KostalData) -> None:
+    """Copy the grid control settings from the options to the runtime data."""
+    new_entity = options.get(CONF_SOURCE_GRID_POWER_ENTITY) or None
+    if new_entity != data.source_grid_power_entity:
+        # A different source makes the old filtered value meaningless
+        data.last_inverter_control_filtered_load_w = None
+    data.source_grid_power_entity = new_entity
+    data.grid_target_w = float(options.get(CONF_GRID_TARGET_W, DEFAULT_GRID_TARGET_W))
+    data.grid_deadband_w = float(options.get(CONF_GRID_DEADBAND_W, DEFAULT_GRID_DEADBAND_W))
+    data.external_control_max_discharge_w = float(
+        options.get(CONF_EXTERNAL_CONTROL_MAX_DISCHARGE_W, DEFAULT_EXTERNAL_CONTROL_MAX_DISCHARGE_W)
+    )
+    data.external_control_max_charge_w = float(
+        options.get(CONF_EXTERNAL_CONTROL_MAX_CHARGE_W, DEFAULT_EXTERNAL_CONTROL_MAX_CHARGE_W)
+    )
+    data.external_control_hysteresis_w = float(
+        options.get(CONF_EXTERNAL_CONTROL_HYSTERESIS_W, DEFAULT_EXTERNAL_CONTROL_HYSTERESIS_W)
+    )
+    ema_alpha = float(options.get(CONF_EXTERNAL_CONTROL_EMA_ALPHA, DEFAULT_EXTERNAL_CONTROL_EMA_ALPHA))
+    # Alpha 0 would freeze the filter on its first reading
+    data.external_control_ema_alpha = min(1.0, max(MIN_EXTERNAL_CONTROL_EMA_ALPHA, ema_alpha))
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

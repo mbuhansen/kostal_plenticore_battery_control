@@ -21,6 +21,13 @@
                     "ksem_host": "IP Address of KSEM"
                 },
                 "description": "A KOSTAL Smart Energy Meter (KSEM) was detected as the connected energy meter on your inverter.\n\nYou can optionally enter the KSEM's IP address to read energy import and export values directly from it via Modbus TCP.\n\n**Leave the field empty to skip KSEM setup.** All other sensors will still work normally."
+            },
+            "grid_source": {
+                "title": "No Smart Meter Detected",
+                "data": {
+                    "source_grid_power_entity": "Grid power entity (optional)"
+                },
+                "description": "No smart meter is connected to your inverter, so the integration cannot see grid import and export by itself.\n\nYou can optionally pick a Home Assistant entity that measures grid power at the connection point — **positive while importing, negative while exporting** (W). This adds an **Inverter Control** switch that charges or discharges the battery to keep the grid near zero.\n\n**Leave the field empty to skip.** Charge Start, Discharge Start and the block switches still work normally. You can add or change the entity later under **Configure**."
             }
         },
         "error": {
@@ -29,6 +36,23 @@
         },
         "abort": {
             "already_configured": "Device is already configured"
+        }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "title": "Inverter Control (External Grid Entity)",
+                "data": {
+                    "source_grid_power_entity": "Grid power entity (blank = off)",
+                    "grid_target_w": "Grid target (W)",
+                    "grid_deadband_w": "Grid deadband (W)",
+                    "external_control_max_discharge_w": "Max discharge power (W)",
+                    "external_control_max_charge_w": "Max charge power (W)",
+                    "external_control_hysteresis_w": "Setpoint hysteresis (W)",
+                    "external_control_ema_alpha": "Load smoothing (EMA alpha, 0.05-1)"
+                },
+                "description": "Pick a Home Assistant entity that measures grid power at the connection point — **positive while importing, negative while exporting** (W). While a grid entity is selected, an **Inverter Control** switch trims grid import/export by charging or discharging the battery. Clear the entity to remove the switch.{meter_note}"
+            }
         }
     }
 }

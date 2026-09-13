@@ -104,6 +104,8 @@ SENSOR_TYPE_MAP = {
     0x03: "KOSTAL Smart Energy Meter (KOSTAL)",
     0xFF: "No sensor",
 }
+SENSOR_TYPE_KSEM = 0x03
+SENSOR_TYPE_NONE = 0xFF
 
 INVERTER_STATE_MAP = {
     0: "Off",
@@ -213,6 +215,10 @@ SENSOR_BATTERY_MIN_SOC = "battery_min_soc"
 SENSOR_BATTERY_MAX_SOC = "battery_max_soc"
 SENSOR_INVERTER_STATE = "inverter_state"
 SENSOR_INVERTER_STATE_TEXT = "inverter_state_text"
+SENSOR_INVERTER_CONTROL_STATUS = "inverter_control_status"
+SENSOR_INVERTER_CONTROL_TARGET_POWER = "inverter_control_target_power"
+SENSOR_INVERTER_CONTROL_TARGET_PERCENT = "inverter_control_target_percent"
+SENSOR_INVERTER_CONTROL_HOUSE_LOAD = "inverter_control_house_load"
 
 # KSEM (KOSTAL Smart Energy Meter) Modbus configuration
 CONF_KSEM_HOST = "ksem_host"
@@ -245,9 +251,39 @@ SENSOR_KSEM_HOME_CONSUMPTION_FROM_GRID = "ksem_home_consumption_from_grid"
 # Dispatcher signal for EMS status updates (append _{entry_id} when used)
 SIGNAL_EMS_STATUS_UPDATED = "kostal_modbus_ems_status"
 SIGNAL_PREDBAT_STATUS_UPDATED = "kostal_modbus_predbat_status"
+SIGNAL_INVERTER_CONTROL_UPDATED = "kostal_modbus_inverter_control"
 
 # Default loop interval in seconds (from automation: usually 15s)
 LOOP_INTERVAL = 15
+
+# Grid control from an external Home Assistant grid-power entity, for
+# inverters without a smart meter. Configured in the options flow; the
+# Inverter Control switch only exists while a grid entity is selected.
+CONF_SOURCE_GRID_POWER_ENTITY = "source_grid_power_entity"
+CONF_GRID_TARGET_W = "grid_target_w"
+CONF_GRID_DEADBAND_W = "grid_deadband_w"
+CONF_EXTERNAL_CONTROL_MAX_DISCHARGE_W = "external_control_max_discharge_w"
+CONF_EXTERNAL_CONTROL_MAX_CHARGE_W = "external_control_max_charge_w"
+CONF_EXTERNAL_CONTROL_HYSTERESIS_W = "external_control_hysteresis_w"
+CONF_EXTERNAL_CONTROL_EMA_ALPHA = "external_control_ema_alpha"
+DEFAULT_GRID_TARGET_W = 0.0
+# Deadband, hysteresis and alpha were tuned together in a closed-loop
+# simulation at one calculation per second: 50/50/0.3 held the grid within
+# ~70 W with 50 W measurement noise, a 3 s inverter response and a grid entity
+# lagging 2 s. Alpha 0.5 started to hunt (±400 W) with that slow a response.
+# Alpha applies per calculation, so a faster grid entity smooths less in time.
+DEFAULT_GRID_DEADBAND_W = 50.0
+DEFAULT_EXTERNAL_CONTROL_MAX_DISCHARGE_W = 5000.0
+DEFAULT_EXTERNAL_CONTROL_MAX_CHARGE_W = 5000.0
+DEFAULT_EXTERNAL_CONTROL_HYSTERESIS_W = 50.0
+DEFAULT_EXTERNAL_CONTROL_EMA_ALPHA = 0.3
+MIN_EXTERNAL_CONTROL_EMA_ALPHA = 0.05
+# Grid control recalculates whenever the grid entity reports a new value, but
+# at most once per GRID_CONTROL_MIN_UPDATE_SECONDS. The loop interval is the
+# fallback for an entity that stops updating, and keeps the inverter's Modbus
+# timeout from expiring.
+GRID_CONTROL_MIN_UPDATE_SECONDS = 1.0
+GRID_CONTROL_LOOP_INTERVAL = 5
 
 # Predbat auto-detect
 PREDBAT_MODE_ENTITY = "select.predbat_mode"
@@ -286,6 +322,7 @@ SWITCH_BLOCK_CHARGE = "block_charge"
 SWITCH_BLOCK_DISCHARGE = "block_discharge"
 SWITCH_EMS = "ems_grid_protection"
 SWITCH_AUTO_RESUME_ON_RECOVERY = "auto_resume_on_recovery"
+SWITCH_INVERTER_CONTROL = "inverter_control"
 SWITCH_IO_OUTPUT_1 = "io_output_1"
 SWITCH_IO_OUTPUT_2 = "io_output_2"
 SWITCH_IO_OUTPUT_3 = "io_output_3"
