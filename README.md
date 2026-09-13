@@ -135,8 +135,8 @@ The EMS (Energy Management System) switch protects your house fuses during force
 *   **Set Charge Rate:** Target power (W) for forced charging. Automatically clamped to the battery's physical limit.
 *   **Set Discharge Rate:** Target power (W) for forced discharging. Automatically clamped to the battery's physical limit.
 *   **House Fuse Size** *(Configuration category)*: The size of your house fuses in Ampere (A). Used by EMS Grid Protection to calculate safe charge headroom.
-*   **Battery Minimum SOC Limit:** 5–99%. `5` means not in use — that is the inverter's own minimum.
-*   **Battery Maximum SOC Limit:** 50–100%. `100` means not in use — that is the inverter's own maximum.
+*   **Battery Minimum SOC Limit:** 5–100%. `5` means not in use — that is the inverter's own minimum.
+*   **Battery Maximum SOC Limit:** 5–100%. `100` means not in use — that is the inverter's own maximum.
 
 Both SOC limits are enabled by default. Installations that predate this were shipped with them disabled
 in the entity registry, and that sticks across updates — if you do not see them on the device page,

@@ -272,8 +272,8 @@ DEFAULT_FUSE_SIZE = 25.0  # Amps — old Kostal default; user should set to actu
 # is written to register 1042/1044 once, so the release takes effect straight
 # away, and nothing is sent afterwards. Any other value is written continuously
 # for as long as it is set — see KostalSocLimitNumber in number.py.
-MIN_SOC_LIMIT_RANGE = (5.0, 99.0)
-MAX_SOC_LIMIT_RANGE = (50.0, 100.0)
+MIN_SOC_LIMIT_RANGE = (5.0, 100.0)
+MAX_SOC_LIMIT_RANGE = (5.0, 100.0)
 DEFAULT_MIN_SOC_LIMIT = MIN_SOC_LIMIT_RANGE[0]
 DEFAULT_MAX_SOC_LIMIT = MAX_SOC_LIMIT_RANGE[1]
 
