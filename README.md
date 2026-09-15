@@ -59,7 +59,7 @@ In the first two modes the inverter **silently ignores** every write — the swi
     *   **Modbus Timeout:** Must match the timeout set in the Inverter Web UI — this keeps the Modbus session alive.
     *   **Inverter Type:**
         *   **Plenticore Hybrid** — charge/discharge power is controlled through register `1034` (battery DC power setpoint in W).
-        *   **Plenticore BI / Battery Inverter** — charge/discharge power is controlled through register `1026` (battery AC power setpoint in W). Not yet tested on a BI.
+        *   **Plenticore BI / Battery Inverter** — charge/discharge power is controlled through register `1026` (battery AC power setpoint in W).
 5.  If battery management is not set to Modbus, a warning screen appears explaining what to change in the Inverter Web UI. Setup continues when you submit it.
 6.  If the inverter reports a **KOSTAL Smart Energy Meter** as its connected meter (sensor type `0x03`), a second step offers to add the KSEM's IP address. This is optional — leave it empty to skip. With it configured, the integration opens a second Modbus connection to the KSEM (port `502`, unit ID `1`) and adds the energy and power-flow sensors listed below.
 7.  If the inverter reports **no smart meter** (sensor type `0xFF`, or the register cannot be read), a step offers to pick a Home Assistant **grid power entity** instead. This is optional — leave it empty to skip, and the charge/discharge switches work as usual. See [Grid Control Without a Smart Meter](#grid-control-without-a-smart-meter).
@@ -143,7 +143,7 @@ Without a smart meter the inverter cannot see grid import and export, so its own
 - Set during setup when no smart meter is detected, or at any time under **Configure**. With a smart meter connected the option is still available for testing, and the form shows a note.
 
 **How it works** (while the switch is on):
-- The setpoint is recalculated every time the grid entity reports a new value, at most once per second. How fast the control can react therefore depends on how often your grid entity updates. Every 5 seconds the last setpoint is written again to keep the inverter's Modbus timeout from expiring, but it is only recalculated when the entity has reported a new measurement — an old grid reading next to a fresh battery power would count the battery's latest change twice and make it overshoot.
+- The setpoint is recalculated every time the grid entity reports a new value, at most once per second. How fast the control can react therefore depends on how often your grid entity updates. Every 5 seconds the last setpoint is written again to keep the inverter's Modbus timeout from expiring; it is only recalculated when the entity has reported a new measurement.
 - Smoothing is applied once per grid reading, so the right **Load smoothing** depends on how often your grid entity updates — see below.
 - Each calculation reads the battery power (register `582`) directly from the inverter, so the grid reading and the battery reading are from the same moment.
 - The grid reading plus the battery power gives the house load the battery has to cover. PV surplus makes it negative. This load is smoothed with an exponential moving average.
@@ -160,16 +160,14 @@ Without a smart meter the inverter cannot see grid import and export, so its own
 | Grid power entity | — | Source of the grid measurement. Clearing it removes the switch and its sensors. |
 | Grid target | 0 W | Grid power to regulate towards. |
 | Grid deadband | 50 W | The setpoint is held while the grid is within this distance of the target. |
-| Max discharge power | Battery maximum | Upper limit for discharging. The form is pre-filled with the maximum battery control power (11900 W on a PLENTICORE G3). Save that value, anything above it, or a blank field and the limit follows the battery maximum; save a lower value and that value is used. |
+| Max discharge power | Battery maximum | Upper limit for discharging. The form is pre-filled with the maximum battery control power. Save that value, anything above it, or a blank field and the limit follows the battery maximum; save a lower value and that value is used. |
 | Max charge power | Battery maximum | Upper limit for charging, same as above. |
 | Setpoint hysteresis | 50 W | Minimum change before a new setpoint is used. |
 | Load smoothing | 0.8 | EMA alpha per grid reading, 0.05–1: `1` = raw value, lower = smoother but slower. |
 
 **Choosing Load smoothing:** smoothing is applied once per grid reading, so a slow grid entity is smoothed much more in time than a fast one.
-- **Grid entity updating every 5–10 seconds** (e.g. the Kostal Plenticore integration): keep the default `0.8`. Tested on a PLENTICORE G3 with an entity updating every 8–10 s, a 2–2.5 kW load step was settled within ±50 W after about 25–30 seconds without overshoot. With `0.3` the same step took about 90 seconds.
-- **Grid entity updating every 1–2 seconds** (e.g. a P1 reader or Shelly EM): lower it to about `0.3`. A fast, noisy measurement with a high value makes the battery setpoint hunt back and forth; in a simulation with a 1 s entity, `0.3` held the grid within about 70 W, while `0.5` already started to swing by ±400 W.
-
-Existing installations keep the value they saved; set it again under **Configure** to use the new default.
+- **Grid entity updating every 5–10 seconds** (e.g. the Kostal Plenticore integration): keep the default `0.8`. A lower value makes the control noticeably slower to follow a load change.
+- **Grid entity updating every 1–2 seconds** (e.g. a P1 reader or Shelly EM): lower it to about `0.3`. A fast, noisy measurement with a high value makes the battery setpoint hunt back and forth.
 
 Deadband, hysteresis and smoothing work together: the grid settles within roughly the larger of deadband and hysteresis. Going much below 50 W, or raising smoothing to `1` on a noisy grid entity, makes the battery setpoint hunt back and forth.
 
@@ -182,16 +180,12 @@ Deadband, hysteresis and smoothing work together: the grid settles within roughl
 
 ### Numbers (Settings)
 
-*   **Set Charge Rate / Set Discharge Rate:** Target power in Watts for forced charging and discharging. A rate starts out following the maximum battery control power (the `Battery Max Control Power` sensor) rounded up to the next 100 W — 11900 W on a PLENTICORE G3, i.e. 30 A times the battery's maximum voltage of 395 V. It does not move with the state of charge: the full nominal battery current is always requested, and the inverter clamps the setpoint to 30 A times the actual battery voltage itself. Set a lower value and that value is kept, also across restarts; set it to the maximum or above and it follows the maximum again. The `follows_max` attribute shows which applies. A fixed value above the current maximum is clamped when written.
-
-    > Earlier versions stored these rates in % of the inverter's nominal value. That cannot be converted reliably, so after upgrading both rates start out following the maximum — set them again if you used a lower value.
+*   **Set Charge Rate / Set Discharge Rate:** Target power in Watts for forced charging and discharging. A rate starts out following the maximum battery control power (the `Battery Max Control Power` sensor), rounded up to the next 100 W. It does not move with the state of charge: the full nominal battery current is always requested, and the inverter clamps the setpoint to what the battery can take at its actual voltage. Set a lower value and that value is kept, also across restarts; set it to the maximum or above and it follows the maximum again. The `follows_max` attribute shows which applies. A fixed value above the current maximum is clamped when written.
 *   **House Fuse Size** *(Configuration category)*: The size of your house fuses in Ampere (A). Used by EMS Grid Protection to calculate safe charge headroom.
 *   **Battery Minimum SOC Limit:** 5–100%. `5` means not in use — that is the inverter's own minimum.
 *   **Battery Maximum SOC Limit:** 5–100%. `100` means not in use — that is the inverter's own maximum.
 
-Both SOC limits are enabled by default. Installations that predate this were shipped with them disabled
-in the entity registry, and that sticks across updates — if you do not see them on the device page,
-enable them there once.
+Both SOC limits are enabled by default. If you do not see them on the device page, enable them there.
 
 ### Battery SOC Limits
 
@@ -211,9 +205,7 @@ so the release takes effect immediately rather than after the inverter's timeout
 sent afterwards.
 
 Expect the inverter to taper charge/discharge power as the SoC approaches an active limit — that taper
-is the inverter enforcing the limit, and it is what makes "stop charging at 50%" hold. Earlier versions
-only started writing 2 percentage points before the limit to avoid it; that left the limit out of force
-the rest of the time, so a fast charge could sail straight past it ([#3](https://github.com/mbuhansen/kostal_plenticore_battery_control/issues/3)).
+is the inverter enforcing the limit, and it is what makes "stop charging at 50%" hold.
 
 Writing these registers this often does not wear the inverter: `1042`/`1044` are volatile Modbus process
 values guarded by the timeout, not stored settings — they revert on their own when the writes stop, which
@@ -342,22 +334,16 @@ unchanged — those still mark communication lost and trigger the automatic resu
 
 The one exception is register `58`. Where it is missing, the `Software Version` sensor falls back to
 the inverter's web API, `http://<inverter>/api/v1/info/version`, which reports the same UI version
-without logging in (a G3 returns `3.07.00.25886` from both; a PLENTICORE plus G1 returns `01.30.12092`
-from the web API only). It is fetched when the integration starts and again after every communication
+without logging in. It is fetched when the integration starts and again after every communication
 outage — a firmware update restarts the inverter, so a new version is picked up by itself. If the web
 API cannot be reached the sensor stays unknown, is retried every 10 minutes, and nothing else is
 affected. Inverters that do implement register `58` never make this request.
 
-Earlier versions treated a refusal like a broken link, closed the connection and aborted the whole poll,
-so a single missing diagnostic register made *all* entities unavailable
-([#4](https://github.com/mbuhansen/kostal_plenticore_battery_control/issues/4),
-[#5](https://github.com/mbuhansen/kostal_plenticore_battery_control/issues/5)).
-
 ## Technical Details
 
-*   **Control Register:** `1034` (Hybrid) / `1026` (BI) — signed absolute power setpoint in Watts (negative = charge, positive = discharge). `1034` is the battery charge power (DC) setpoint for hybrid inverters, where the battery is DC-coupled; `1026` is the battery charge power (AC) setpoint for the AC-coupled PLENTICORE BI. Selected by the inverter type chosen during setup. Tested on a PLENTICORE G3 (SW 3.07): `1034` alone is enough, the setpoint is reached within a few seconds to within a few Watts, and the inverter itself clamps it to its nominal battery current. About 30 seconds after the last write the inverter falls back to its own control, and reading the register back still shows the last value, so it cannot tell whether external control is active. Earlier versions used the relative setpoints `1028` / `1030`.
+*   **Control Register:** `1034` (Hybrid) / `1026` (BI) — signed absolute power setpoint in Watts (negative = charge, positive = discharge). `1034` is the battery charge power (DC) setpoint for hybrid inverters, where the battery is DC-coupled; `1026` is the battery charge power (AC) setpoint for the AC-coupled PLENTICORE BI. Selected by the inverter type chosen during setup. The setpoint register is written on its own, and the inverter clamps a setpoint above its limit itself. When the writes stop, the inverter falls back to its own control after its Modbus timeout; reading the register back still shows the last value, so it cannot tell whether external control is active.
 *   **Maximum Battery Control Power:** Setpoints are clamped to it, rounded up to the next 100 W so a rate that follows the maximum always requests the full nominal battery current.
-    *   **Hybrid:** `battery maximum voltage × nominal battery current`. The nominal battery current is measured as `1078 / battery voltage (216)` — on a G3, `1078` is exactly 30 A times the actual battery voltage. The battery's maximum voltage is `1076 / nominal battery current` — on a G3, `1076` is 30 A times 395 V. The highest values seen since Home Assistant started are kept, so a temporary BMS derating does not lower them, and the result stays fixed instead of moving with the state of charge. If `1076` gives a maximum voltage more than 1.3 times the actual voltage (a model where `1076` is not based on the same current), the actual battery voltage is used instead. The current is capped by the documented current of the inverter generation, taken from the first number of the software version:
+    *   **Hybrid:** `battery maximum voltage × nominal battery current`. The nominal battery current is measured as `1078 / battery voltage (216)`, as `1078` is that current times the actual battery voltage. The battery's maximum voltage is `1076 / nominal battery current`, as `1076` is that current times the battery's maximum voltage. The highest values seen since Home Assistant started are kept, so a temporary BMS derating does not lower them, and the result stays fixed instead of moving with the state of charge. If `1076` gives a maximum voltage more than 1.3 times the actual voltage (a model where `1076` is not based on the same current), the actual battery voltage is used instead. The current is capped by the documented current of the inverter generation, taken from the first number of the software version:
 
         | Inverter | Software version | Nominal battery current |
         |---|---|---|
