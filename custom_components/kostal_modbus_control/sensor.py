@@ -316,9 +316,11 @@ class KostalBatteryMaxControlPowerSensor(KostalBaseSensor):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         observed = self._data.battery_nominal_current_observed
+        max_voltage = self._data.battery_max_voltage()
         return {
             "nominal_current_observed": round(observed, 2) if observed is not None else None,
             "nominal_current_documented": self._data.documented_battery_nominal_current(),
+            "battery_max_voltage": round(max_voltage, 1) if max_voltage is not None else None,
         }
 
 

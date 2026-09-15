@@ -132,7 +132,7 @@ The EMS (Energy Management System) switch protects your house fuses during force
 
 ### Numbers (Settings)
 
-*   **Set Charge Rate / Set Discharge Rate:** Target power in Watts for forced charging and discharging. A rate starts out following the maximum battery control power (the `Battery Max Control Power` sensor) rounded up to the next 100 W, so it shows e.g. 11100 W on a PLENTICORE G3 at 368 V and moves with the battery voltage. Rounding up makes sure the full nominal battery current (30 A on a G3) is requested — the inverter clamps a setpoint above its limit itself. Set a lower value and that value is kept, also across restarts; set it to the maximum or above and it follows the maximum again. The `follows_max` attribute shows which applies. A fixed value above the current maximum is clamped when written.
+*   **Set Charge Rate / Set Discharge Rate:** Target power in Watts for forced charging and discharging. A rate starts out following the maximum battery control power (the `Battery Max Control Power` sensor) rounded up to the next 100 W — 11900 W on a PLENTICORE G3, i.e. 30 A times the battery's maximum voltage of 395 V. It does not move with the state of charge: the full nominal battery current is always requested, and the inverter clamps the setpoint to 30 A times the actual battery voltage itself. Set a lower value and that value is kept, also across restarts; set it to the maximum or above and it follows the maximum again. The `follows_max` attribute shows which applies. A fixed value above the current maximum is clamped when written.
 
     > Earlier versions stored these rates in % of the inverter's nominal value. That cannot be converted reliably, so after upgrading both rates start out following the maximum — set them again if you used a lower value.
 *   **House Fuse Size** *(Configuration category)*: The size of your house fuses in Ampere (A). Used by EMS Grid Protection to calculate safe charge headroom.
@@ -190,7 +190,7 @@ want to watch this happen. Each limit entity also exposes `active` and `writing`
 | Battery Model ID Text | — | Decoded battery model name |
 | EMS Grid Protection Status | — | Current state of the EMS Grid Protection function |
 | EMS Charge Limit | W | Charge limit currently computed by EMS Grid Protection |
-| Battery Max Control Power | W | Maximum power the integration clamps charge/discharge setpoints to — see Maximum Battery Control Power. Attributes show the observed and documented nominal battery current |
+| Battery Max Control Power | W | Maximum power the integration clamps charge/discharge setpoints to — see Maximum Battery Control Power. Attributes show the observed and documented nominal battery current and the battery maximum voltage |
 | Predbat Status | — | What Predbat control is currently doing |
 | Predbat Mode | — | Whether Predbat is installed and in an active control mode |
 
@@ -307,7 +307,7 @@ so a single missing diagnostic register made *all* entities unavailable
 
 *   **Control Register:** `1034` (Hybrid) / `1026` (BI) — signed absolute power setpoint in Watts (negative = charge, positive = discharge). `1034` is the battery charge power (DC) setpoint for hybrid inverters, where the battery is DC-coupled; `1026` is the battery charge power (AC) setpoint for the AC-coupled PLENTICORE BI. Selected by the inverter type chosen during setup. Tested on a PLENTICORE G3 (SW 3.07): `1034` alone is enough, the setpoint is reached within a few seconds to within a few Watts, and the inverter itself clamps it to its nominal battery current. About 30 seconds after the last write the inverter falls back to its own control, and reading the register back still shows the last value, so it cannot tell whether external control is active. Earlier versions used the relative setpoints `1028` / `1030`.
 *   **Maximum Battery Control Power:** Setpoints are clamped to it, rounded up to the next 100 W so a rate that follows the maximum always requests the full nominal battery current.
-    *   **Hybrid:** `battery voltage (216) × nominal battery current`. The nominal battery current is measured as `1078 / battery voltage` — on a G3, `1078` is exactly 30 A times the actual battery voltage — and the highest value seen since Home Assistant started is kept, so a temporary BMS derating does not lower it. It is capped by the documented current of the inverter generation, taken from the first number of the software version:
+    *   **Hybrid:** `battery maximum voltage × nominal battery current`. The nominal battery current is measured as `1078 / battery voltage (216)` — on a G3, `1078` is exactly 30 A times the actual battery voltage. The battery's maximum voltage is `1076 / nominal battery current` — on a G3, `1076` is 30 A times 395 V. The highest values seen since Home Assistant started are kept, so a temporary BMS derating does not lower them, and the result stays fixed instead of moving with the state of charge. If `1076` gives a maximum voltage more than 1.3 times the actual voltage (a model where `1076` is not based on the same current), the actual battery voltage is used instead. The current is capped by the documented current of the inverter generation, taken from the first number of the software version:
 
         | Inverter | Software version | Nominal battery current |
         |---|---|---|
@@ -316,7 +316,7 @@ so a single missing diagnostic register made *all* entities unavailable
         | PLENTICORE G3 / MP G3 | `3.xx` / `03.xx` | 30 A |
 
     *   **BI:** the nominal AC power from the power class (register `800`): 5500 W for the BI 5.5/26 and 10000 W for the BI 10/26, or `1078` when the power class is unknown.
-    *   Register `1076` is not used for this: on a G3 it is 30 A times the battery's *maximum* voltage, not its actual voltage.
+    *   The `Battery Max Control Power` sensor exposes the observed and documented nominal current and the battery maximum voltage as attributes.
 *   **Limit Registers:** `1076` / `1078` — Maximum charge/discharge power limits read out from the battery.
 *   **Block Registers:** `1038` / `1040` — Battery max. charge/discharge power limits. Only used for blocking: written to 0 to block, and restored to the battery's own maximum (`1076` / `1078`) afterwards.
 *   **SOC Limit Registers:** `1042` / `1044` — Minimum/maximum SOC. Only in effect while actively written.

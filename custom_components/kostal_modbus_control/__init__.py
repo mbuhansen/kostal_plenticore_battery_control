@@ -44,6 +44,7 @@ from .const import (
     REG_BATTERY_AC_POWER_SETPOINT_W,
     REG_BATTERY_MAX_CHARGE_POWER_W,
     REG_BATTERY_MAX_DISCHARGE_POWER_W,
+    BATTERY_MAX_VOLTAGE_PLAUSIBLE_RATIO,
     BATTERY_NOMINAL_CURRENT_BY_GENERATION,
     BI_NOMINAL_POWER_BY_POWER_CLASS,
     CONF_INVERTER_TYPE,
@@ -341,8 +342,10 @@ class KostalData:
     inverter_power_class: str = ""
     # Absolute power setpoint register: 1034 (DC) for hybrid, 1026 (AC) for BI
     charge_discharge_reg: int = REG_BATTERY_DC_POWER_SETPOINT_W
-    # Highest 1078 / battery voltage seen this session, see max_battery_power_w()
+    # Highest 1078 / battery voltage and highest 1076 seen this session,
+    # see max_battery_power_w()
     battery_nominal_current_observed: float | None = None
+    battery_max_charge_limit_peak: float | None = None
     scaling_warnings_logged: set[str] = field(default_factory=set)
     # User setpoints from the SOC limit numbers. The defaults equal the
     # inverter's own limits, i.e. "not in use". The number entities own the
@@ -372,12 +375,18 @@ class KostalData:
         _LOGGER.warning(message, *args)
 
     def update_observed_battery_current(self, data: dict) -> None:
-        """Track the highest nominal battery current seen, as 1078 / battery voltage.
+        """Track the highest nominal battery current and battery charge limit seen.
 
         On a G3, register 1078 is exactly the nominal battery current times the
-        actual battery voltage. A BMS derating lowers 1078, so the highest value
-        of the session is kept instead of the latest.
+        actual battery voltage, and 1076 is that current times the battery's
+        maximum voltage. A BMS derating lowers them, so the highest values of
+        the session are kept instead of the latest.
         """
+        max_charge = data.get(REG_BATTERY_MAX_CHARGE_LIMIT)
+        peak = self.battery_max_charge_limit_peak
+        if max_charge and max_charge > 0.0 and (peak is None or max_charge > peak):
+            self.battery_max_charge_limit_peak = max_charge
+
         voltage = data.get(REG_BATTERY_VOLTAGE)
         max_discharge = data.get(REG_BATTERY_MAX_DISCHARGE_LIMIT)
         if not voltage or voltage <= 0.0 or not max_discharge or max_discharge <= 0.0:
@@ -387,6 +396,31 @@ class KostalData:
         if observed is None or current > observed:
             self.battery_nominal_current_observed = current
             _LOGGER.debug("Observed nominal battery current %.2f A (1078=%.0f W, V=%.1f V)", current, max_discharge, voltage)
+
+    def battery_max_voltage(self) -> float | None:
+        """Battery's maximum voltage, as the highest 1076 / observed nominal current.
+
+        Returns None when it is unknown or implausible — e.g. on a model where
+        1076 is not based on the same current as 1078 — so the caller falls
+        back to the actual battery voltage.
+        """
+        peak = self.battery_max_charge_limit_peak
+        observed = self.battery_nominal_current_observed
+        data = self.coordinator.data if self.coordinator is not None else None
+        voltage = data.get(REG_BATTERY_VOLTAGE) if data is not None else None
+        if peak is None or observed is None or not voltage or voltage <= 0.0:
+            return None
+        max_voltage = peak / observed
+        if max_voltage > voltage * BATTERY_MAX_VOLTAGE_PLAUSIBLE_RATIO:
+            self._warn_once(
+                "max_voltage_implausible",
+                "Battery maximum voltage %.0f V from register 1076 is implausible at %.0f V actual — "
+                "using the actual battery voltage for the maximum battery control power",
+                max_voltage,
+                voltage,
+            )
+            return None
+        return max(max_voltage, voltage)
 
     def documented_battery_nominal_current(self) -> float | None:
         """Documented nominal battery current of the inverter generation, or None when unknown."""
@@ -411,11 +445,14 @@ class KostalData:
     def max_battery_power_w(self) -> float | None:
         """Maximum battery control power in Watts, or None when it cannot be determined.
 
-        Hybrid: battery voltage times the nominal battery current, where that
-        current is the highest observed 1078 / voltage, capped by the documented
-        current of the inverter generation. BI: the nominal AC power from the
-        power class, or the battery's discharge limit 1078 when the power class
-        is unknown.
+        Hybrid: the battery's maximum voltage times the nominal battery current,
+        where that current is the highest observed 1078 / voltage, capped by the
+        documented current of the inverter generation. Using the maximum voltage
+        keeps the value fixed instead of moving with the state of charge; the
+        inverter clamps a setpoint to its current times the actual voltage
+        itself. Falls back to the actual voltage when the maximum is unknown.
+        BI: the nominal AC power from the power class, or the battery's
+        discharge limit 1078 when the power class is unknown.
         """
         data = self.coordinator.data if self.coordinator is not None else None
         if data is None:
@@ -447,7 +484,8 @@ class KostalData:
             current = observed if observed is not None else documented
         if current is None:
             return None
-        return voltage * current
+        max_voltage = self.battery_max_voltage()
+        return (max_voltage if max_voltage is not None else voltage) * current
 
     def max_battery_power_step_w(self) -> float | None:
         """Maximum battery control power rounded up to a whole rate step (100 W).
