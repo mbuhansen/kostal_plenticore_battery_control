@@ -144,7 +144,7 @@ Without a smart meter the inverter cannot see grid import and export, so its own
 
 **How it works** (while the switch is on):
 - The setpoint is recalculated every time the grid entity reports a new value, at most once per second. How fast the control can react therefore depends on how often your grid entity updates. Every 5 seconds the last setpoint is written again to keep the inverter's Modbus timeout from expiring, but it is only recalculated when the entity has reported a new measurement — an old grid reading next to a fresh battery power would count the battery's latest change twice and make it overshoot.
-- Smoothing is applied once per grid reading. With a grid entity that updates every 8–10 seconds, such as the Kostal Plenticore integration, a higher **Load smoothing** (e.g. `0.5`) settles faster.
+- Smoothing is applied once per grid reading, so the right **Load smoothing** depends on how often your grid entity updates — see below.
 - Each calculation reads the battery power (register `582`) directly from the inverter, so the grid reading and the battery reading are from the same moment.
 - The grid reading plus the battery power gives the house load the battery has to cover. PV surplus makes it negative. This load is smoothed with an exponential moving average.
 - The battery setpoint is the smoothed load minus **Grid target**: a positive load → discharge, a negative load (surplus) → charge.
@@ -163,7 +163,13 @@ Without a smart meter the inverter cannot see grid import and export, so its own
 | Max discharge power | Battery maximum | Upper limit for discharging. The form is pre-filled with the maximum battery control power (11900 W on a PLENTICORE G3). Save that value, anything above it, or a blank field and the limit follows the battery maximum; save a lower value and that value is used. |
 | Max charge power | Battery maximum | Upper limit for charging, same as above. |
 | Setpoint hysteresis | 50 W | Minimum change before a new setpoint is used. |
-| Load smoothing | 0.3 | EMA alpha per calculation, 0.05–1: `1` = raw value, lower = smoother but slower. |
+| Load smoothing | 0.8 | EMA alpha per grid reading, 0.05–1: `1` = raw value, lower = smoother but slower. |
+
+**Choosing Load smoothing:** smoothing is applied once per grid reading, so a slow grid entity is smoothed much more in time than a fast one.
+- **Grid entity updating every 5–10 seconds** (e.g. the Kostal Plenticore integration): keep the default `0.8`. Tested on a PLENTICORE G3 with an entity updating every 8–10 s, a 2–2.5 kW load step was settled within ±50 W after about 25–30 seconds without overshoot. With `0.3` the same step took about 90 seconds.
+- **Grid entity updating every 1–2 seconds** (e.g. a P1 reader or Shelly EM): lower it to about `0.3`. A fast, noisy measurement with a high value makes the battery setpoint hunt back and forth; in a simulation with a 1 s entity, `0.3` held the grid within about 70 W, while `0.5` already started to swing by ±400 W.
+
+Existing installations keep the value they saved; set it again under **Configure** to use the new default.
 
 Deadband, hysteresis and smoothing work together: the grid settles within roughly the larger of deadband and hysteresis. Going much below 50 W, or raising smoothing to `1` on a noisy grid entity, makes the battery setpoint hunt back and forth.
 

@@ -266,16 +266,18 @@ CONF_EXTERNAL_CONTROL_MAX_CHARGE_W = "external_control_max_charge_w"
 CONF_EXTERNAL_CONTROL_HYSTERESIS_W = "external_control_hysteresis_w"
 CONF_EXTERNAL_CONTROL_EMA_ALPHA = "external_control_ema_alpha"
 DEFAULT_GRID_TARGET_W = 0.0
-# Deadband, hysteresis and alpha were tuned together in a closed-loop
-# simulation at one calculation per second: 50/50/0.3 held the grid within
-# ~70 W with 50 W measurement noise, a 3 s inverter response and a grid entity
-# lagging 2 s. Alpha 0.5 started to hunt (±400 W) with that slow a response.
-# Alpha applies per calculation, so a faster grid entity smooths less in time.
+# Alpha applies once per grid reading. Default 0.8 is tuned on a PLENTICORE G3
+# with a grid entity updating every 8-10 s (Kostal Plenticore integration): a
+# 2-2.5 kW load step settled within ±50 W in about 25-30 s without overshoot,
+# where 0.3 took about 90 s. For a grid entity updating every second, a
+# closed-loop simulation found 0.3 better: with 50/50/0.3, 50 W measurement
+# noise, a 3 s inverter response and 2 s entity lag the grid held within
+# ~70 W, while 0.5 started to hunt (±400 W).
 DEFAULT_GRID_DEADBAND_W = 50.0
 # Max charge/discharge power have no default: without a stored value they
 # follow the maximum battery control power, like the charge/discharge rates.
 DEFAULT_EXTERNAL_CONTROL_HYSTERESIS_W = 50.0
-DEFAULT_EXTERNAL_CONTROL_EMA_ALPHA = 0.3
+DEFAULT_EXTERNAL_CONTROL_EMA_ALPHA = 0.8
 MIN_EXTERNAL_CONTROL_EMA_ALPHA = 0.05
 # Grid control recalculates whenever the grid entity reports a new value, but
 # at most once per GRID_CONTROL_MIN_UPDATE_SECONDS. The loop interval is the
