@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
 import time
 from dataclasses import dataclass, field
@@ -68,6 +69,7 @@ from .const import (
     DEFAULT_MIN_SOC_LIMIT,
     DEFAULT_MAX_SOC_LIMIT,
     POWER_RATE_FALLBACK_MAX_W,
+    POWER_RATE_STEP_W,
     REG_CURRENT_PHASE1,
     REG_CURRENT_PHASE2,
     REG_CURRENT_PHASE3,
@@ -447,6 +449,18 @@ class KostalData:
             return None
         return voltage * current
 
+    def max_battery_power_step_w(self) -> float | None:
+        """Maximum battery control power rounded up to a whole rate step (100 W).
+
+        Rounding up means a rate that follows the maximum always asks for at
+        least the full nominal battery current; the inverter clamps a setpoint
+        above its limit itself.
+        """
+        max_power = self.max_battery_power_w()
+        if max_power is None:
+            return None
+        return math.ceil(max_power / POWER_RATE_STEP_W) * POWER_RATE_STEP_W
+
     def charge_power_w(self) -> float:
         """Charge rate in Watts: the user's fixed value, or the maximum control power."""
         return self._power_rate_w(self.charge_power_fixed_w)
@@ -458,7 +472,7 @@ class KostalData:
     def _power_rate_w(self, fixed_w: float | None) -> float:
         if fixed_w is not None:
             return fixed_w
-        max_power = self.max_battery_power_w()
+        max_power = self.max_battery_power_step_w()
         if max_power is None:
             self._warn_once(
                 "max_power_unknown",
@@ -469,8 +483,8 @@ class KostalData:
         return max_power
 
     def clamp_power_setpoint_w(self, watts: float) -> float:
-        """Clamp a signed power setpoint to plus/minus the maximum control power."""
-        max_power = self.max_battery_power_w()
+        """Clamp a signed power setpoint to plus/minus the maximum control power, rounded up to a rate step."""
+        max_power = self.max_battery_power_step_w()
         if max_power is None:
             return watts
         return max(-max_power, min(max_power, watts))

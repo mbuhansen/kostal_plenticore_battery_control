@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import math
 from datetime import timedelta
 from typing import Any
 
@@ -94,17 +93,12 @@ class KostalPowerRateNumber(RestoreNumber):
         fixed = self._fixed()
         if fixed is not None:
             return fixed
-        max_power = self._data.max_battery_power_w()
-        if max_power is None:
-            return None
-        return math.floor(max_power / POWER_RATE_STEP_W) * POWER_RATE_STEP_W
+        return self._data.max_battery_power_step_w()
 
     @property
     def native_max_value(self) -> float:
-        max_power = self._data.max_battery_power_w()
-        if max_power is None:
-            return POWER_RATE_FALLBACK_MAX_W
-        return math.ceil(max_power / POWER_RATE_STEP_W) * POWER_RATE_STEP_W
+        max_power = self._data.max_battery_power_step_w()
+        return POWER_RATE_FALLBACK_MAX_W if max_power is None else max_power
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -148,13 +142,8 @@ class KostalPowerRateNumber(RestoreNumber):
         self.async_write_ha_state()
 
     async def async_set_native_value(self, value: float) -> None:
-        max_power = self._data.max_battery_power_w()
-        follow_from = (
-            POWER_RATE_FALLBACK_MAX_W
-            if max_power is None
-            else math.floor(max_power / POWER_RATE_STEP_W) * POWER_RATE_STEP_W
-        )
-        if value >= follow_from:
+        max_power = self._data.max_battery_power_step_w()
+        if value >= (POWER_RATE_FALLBACK_MAX_W if max_power is None else max_power):
             self._set_fixed(None)
         else:
             self._set_fixed(float(value))

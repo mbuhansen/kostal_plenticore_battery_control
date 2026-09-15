@@ -132,7 +132,7 @@ The EMS (Energy Management System) switch protects your house fuses during force
 
 ### Numbers (Settings)
 
-*   **Set Charge Rate / Set Discharge Rate:** Target power in Watts for forced charging and discharging. A rate starts out following the maximum battery control power (the `Battery Max Control Power` sensor), so it shows e.g. about 11000 W on a PLENTICORE G3 and moves with the battery voltage. Set a lower value and that value is kept, also across restarts; set it to the maximum or above and it follows the maximum again. The `follows_max` attribute shows which applies. A fixed value above the current maximum is clamped when written.
+*   **Set Charge Rate / Set Discharge Rate:** Target power in Watts for forced charging and discharging. A rate starts out following the maximum battery control power (the `Battery Max Control Power` sensor) rounded up to the next 100 W, so it shows e.g. 11100 W on a PLENTICORE G3 at 368 V and moves with the battery voltage. Rounding up makes sure the full nominal battery current (30 A on a G3) is requested — the inverter clamps a setpoint above its limit itself. Set a lower value and that value is kept, also across restarts; set it to the maximum or above and it follows the maximum again. The `follows_max` attribute shows which applies. A fixed value above the current maximum is clamped when written.
 
     > Earlier versions stored these rates in % of the inverter's nominal value. That cannot be converted reliably, so after upgrading both rates start out following the maximum — set them again if you used a lower value.
 *   **House Fuse Size** *(Configuration category)*: The size of your house fuses in Ampere (A). Used by EMS Grid Protection to calculate safe charge headroom.
@@ -306,7 +306,7 @@ so a single missing diagnostic register made *all* entities unavailable
 ## Technical Details
 
 *   **Control Register:** `1034` (Hybrid) / `1026` (BI) — signed absolute power setpoint in Watts (negative = charge, positive = discharge). `1034` is the battery charge power (DC) setpoint for hybrid inverters, where the battery is DC-coupled; `1026` is the battery charge power (AC) setpoint for the AC-coupled PLENTICORE BI. Selected by the inverter type chosen during setup. Tested on a PLENTICORE G3 (SW 3.07): `1034` alone is enough, the setpoint is reached within a few seconds to within a few Watts, and the inverter itself clamps it to its nominal battery current. About 30 seconds after the last write the inverter falls back to its own control, and reading the register back still shows the last value, so it cannot tell whether external control is active. Earlier versions used the relative setpoints `1028` / `1030`.
-*   **Maximum Battery Control Power:** Setpoints and rates that follow the maximum are clamped to it.
+*   **Maximum Battery Control Power:** Setpoints are clamped to it, rounded up to the next 100 W so a rate that follows the maximum always requests the full nominal battery current.
     *   **Hybrid:** `battery voltage (216) × nominal battery current`. The nominal battery current is measured as `1078 / battery voltage` — on a G3, `1078` is exactly 30 A times the actual battery voltage — and the highest value seen since Home Assistant started is kept, so a temporary BMS derating does not lower it. It is capped by the documented current of the inverter generation, taken from the first number of the software version:
 
         | Inverter | Software version | Nominal battery current |
