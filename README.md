@@ -143,7 +143,8 @@ Without a smart meter the inverter cannot see grid import and export, so its own
 - Set during setup when no smart meter is detected, or at any time under **Configure**. With a smart meter connected the option is still available for testing, and the form shows a note.
 
 **How it works** (while the switch is on):
-- The setpoint is recalculated every time the grid entity reports a new value, at most once per second, and at least every 5 seconds if the entity stops updating. How fast the control can react therefore depends on how often your grid entity updates.
+- The setpoint is recalculated every time the grid entity reports a new value, at most once per second. How fast the control can react therefore depends on how often your grid entity updates. Every 5 seconds the last setpoint is written again to keep the inverter's Modbus timeout from expiring, but it is only recalculated when the entity has reported a new measurement — an old grid reading next to a fresh battery power would count the battery's latest change twice and make it overshoot.
+- Smoothing is applied once per grid reading. With a grid entity that updates every 8–10 seconds, such as the Kostal Plenticore integration, a higher **Load smoothing** (e.g. `0.5`) settles faster.
 - Each calculation reads the battery power (register `582`) directly from the inverter, so the grid reading and the battery reading are from the same moment.
 - The grid reading plus the battery power gives the house load the battery has to cover. PV surplus makes it negative. This load is smoothed with an exponential moving average.
 - The battery setpoint is the smoothed load minus **Grid target**: a positive load → discharge, a negative load (surplus) → charge.

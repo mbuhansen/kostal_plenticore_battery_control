@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import asyncio
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
@@ -1218,6 +1218,8 @@ class KostalInverterControlSwitch(KostalBaseSwitch, RestoreEntity):
         self._cancel_deferred_update = None
         self._last_calculation = 0.0
         self._calculation_lock = asyncio.Lock()
+        # Report time of the grid reading the last calculation used
+        self._last_grid_reading: datetime | None = None
 
     def _start_periodic_loop(self) -> None:
         super()._start_periodic_loop()
@@ -1378,7 +1380,29 @@ class KostalInverterControlSwitch(KostalBaseSwitch, RestoreEntity):
             self._last_calculation = time.monotonic()
             await self._calculate_and_write()
 
+    def _grid_reading_time(self) -> datetime | None:
+        """When the grid entity last reported a measurement, or None when it has none."""
+        entity_id = self._data.source_grid_power_entity
+        state = self.hass.states.get(entity_id) if entity_id else None
+        if state is None or state.state in {"unknown", "unavailable", "none", "None"}:
+            return None
+        # last_reported also moves when the entity reports an unchanged value
+        return getattr(state, "last_reported", None) or state.last_updated
+
     async def _calculate_and_write(self) -> None:
+        # Only recalculate on a new grid reading. The fallback timer fires more
+        # often than a slow grid entity updates, and an old grid reading next to
+        # a fresh battery power counts the battery's latest change twice: after
+        # a load drop the battery undershoots. Repeat the last setpoint instead,
+        # which also keeps the inverter's Modbus timeout from expiring.
+        reading_time = self._grid_reading_time()
+        last_setpoint = self._data.last_inverter_control_setpoint_w
+        if reading_time is not None and reading_time == self._last_grid_reading and last_setpoint is not None:
+            _LOGGER.debug("Inverter Control: no new grid reading — repeating setpoint %.0fW", last_setpoint)
+            await self._write_power_setpoint(last_setpoint)
+            return
+        self._last_grid_reading = reading_time
+
         # Read battery power fresh on every calculation. The coordinator only
         # refreshes it every LOOP_INTERVAL seconds, and a stale value next to a
         # fresh grid reading gives a wrong house load.
@@ -1414,11 +1438,13 @@ class KostalInverterControlSwitch(KostalBaseSwitch, RestoreEntity):
         await self._write_power_setpoint(0.0)
         self._data.last_inverter_control_setpoint_w = None
         self._data.last_inverter_control_filtered_load_w = None
+        self._last_grid_reading = None
         self._publish_state("Inactive")
         await self._data.handler.close()
 
     def _on_communication_fault(self) -> None:
         self._data.last_inverter_control_setpoint_w = None
+        self._last_grid_reading = None
         self._publish_state("Unavailable")
 
 
