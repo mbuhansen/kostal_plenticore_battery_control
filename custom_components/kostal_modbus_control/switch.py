@@ -21,8 +21,8 @@ from .const import (
     LOOP_INTERVAL,
     PREDBAT_CHARGE_START_DELTA,
     PREDBAT_HOLD_DELTA,
-    REG_CHARGE_RATE,
-    REG_DISCHARGE_RATE,
+    REG_BATTERY_MAX_CHARGE_POWER_W,
+    REG_BATTERY_MAX_DISCHARGE_POWER_W,
     REG_TOTAL_ACTIVE_POWER,
     REG_BATTERY_POWER,
     REG_BATTERY_MAX_CHARGE_LIMIT,
@@ -340,7 +340,7 @@ class KostalBaseSwitch(SwitchEntity):
                 return
 
         # Kør pre-start (f.eks. nulstil 1038/1040) først efter eventuel ventetid,
-        # så ingen Modbus-besked nulstiller inverterens 1034-timeout under ventetiden.
+        # så ingen Modbus-besked nulstiller inverterens 1028/1030-timeout under ventetiden.
         if not await self._run_guarded_action(self._pre_start_action, "pre-start"):
             return
         if not self._attr_is_on:
@@ -382,7 +382,7 @@ class KostalBaseSwitch(SwitchEntity):
         """Read the currently applied discharge limit from register 1040."""
         coordinator = self._data.coordinator
         if coordinator is not None and coordinator.data is not None:
-            return coordinator.data.get(REG_DISCHARGE_RATE) or 0.0
+            return coordinator.data.get(REG_BATTERY_MAX_DISCHARGE_POWER_W) or 0.0
         return 0.0
 
     async def _restore_max_discharge_limit(self) -> bool:
@@ -394,7 +394,7 @@ class KostalBaseSwitch(SwitchEntity):
             )
             return False
 
-        await self._data.handler.write_float(REG_DISCHARGE_RATE, max_discharge_watts)
+        await self._data.handler.write_float(REG_BATTERY_MAX_DISCHARGE_POWER_W, max_discharge_watts)
         return True
 
     def _stop_signed_pct_from_active_power(self) -> float:
@@ -477,7 +477,7 @@ class KostalBaseSwitch(SwitchEntity):
         return signed_stop_pct
 
     async def _pre_start_action(self):
-        """Køres straks ved start, inden eventuel ventetid på 1034."""
+        """Køres straks ved start, inden eventuel ventetid på 1028/1030."""
         pass
 
     async def _loop_action(self, *args):
@@ -583,7 +583,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
 
         While the low-power charge rate is capping the charge target, sustained
         grid export means the inverter's own internal control (once the
-        register 1034 write stops refreshing) will drive the grid point to 0
+        register 1028/1030 write stops refreshing) will drive the grid point to 0
         faster than this integration's own loop can. When export has stayed
         at or below -PREDBAT_LOW_POWER_EXPORT_THRESHOLD_WATTS for
         PREDBAT_LOW_POWER_SUSPEND_DELAY_SECONDS, stop writing. Once suspended,
@@ -952,7 +952,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                     f"Predbat {hold_status.lower()}: blocking discharge because SOC={soc:.1f}% <= hold limit {hold_limit:.1f}%"
                 )
                 self._predbat_discharge_blocked = True
-            await self._data.handler.write_float(REG_DISCHARGE_RATE, 0.0)
+            await self._data.handler.write_float(REG_BATTERY_MAX_DISCHARGE_POWER_W, 0.0)
         else:
             # Above hold limit — restore free discharge if 1040 was previously forced to zero.
             discharge_limit_is_blocked = self._current_discharge_limit_watts() <= 0.0
@@ -1026,11 +1026,11 @@ class KostalBlockDischargeSwitch(KostalBaseSwitch):
             return
         # Write discharge rate 0 to Block Discharge (1040)
         # MUST BE POSITIVE (0 is positive)
-        await self._data.handler.write_float(REG_DISCHARGE_RATE, 0.0)
+        await self._data.handler.write_float(REG_BATTERY_MAX_DISCHARGE_POWER_W, 0.0)
 
     async def _stop_action(self):
         self._data.last_stop_time = time.time()
-        await self._data.handler.write_float(REG_DISCHARGE_RATE, self._max_discharge_watts())
+        await self._data.handler.write_float(REG_BATTERY_MAX_DISCHARGE_POWER_W, self._max_discharge_watts())
         await self._data.handler.close()
 
 class KostalBlockChargeSwitch(KostalBaseSwitch):
@@ -1043,11 +1043,11 @@ class KostalBlockChargeSwitch(KostalBaseSwitch):
             return
         # Write 0 to charge rate (Block Charge) via 1038
         # MUST BE POSITIVE (0 is positive)
-        await self._data.handler.write_float(REG_CHARGE_RATE, 0.0)
+        await self._data.handler.write_float(REG_BATTERY_MAX_CHARGE_POWER_W, 0.0)
 
     async def _stop_action(self):
         self._data.last_stop_time = time.time()
-        await self._data.handler.write_float(REG_CHARGE_RATE, self._max_charge_watts())
+        await self._data.handler.write_float(REG_BATTERY_MAX_CHARGE_POWER_W, self._max_charge_watts())
         await self._data.handler.close()
 
 
@@ -1173,7 +1173,7 @@ class KostalEMSSwitch(KostalBaseSwitch, RestoreEntity):
 
         self._data.ems_charge_limit_pct = target_pct
         self._set_ems_status(new_status)
-        # EMS does NOT write to Modbus — Charge Start is the sole writer to 1034
+        # EMS does NOT write to Modbus — Charge Start is the sole writer to 1028/1030
 
     async def _stop_action(self) -> None:
         self._ems_smoothed_limit = None

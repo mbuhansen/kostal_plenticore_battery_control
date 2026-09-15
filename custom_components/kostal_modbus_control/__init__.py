@@ -38,10 +38,10 @@ from .const import (
     REG_BATTERY_TEMP,
     REG_BATTERY_MAX_CHARGE_LIMIT,
     REG_BATTERY_MAX_DISCHARGE_LIMIT,
-    REG_CHARGE_DISCHARGE_LIMIT,
-    REG_CHARGE_DISCHARGE_LIMIT_BI,
-    REG_CHARGE_RATE,
-    REG_DISCHARGE_RATE,
+    REG_BATTERY_DC_CURRENT_SETPOINT_REL,
+    REG_BATTERY_AC_POWER_SETPOINT_REL,
+    REG_BATTERY_MAX_CHARGE_POWER_W,
+    REG_BATTERY_MAX_DISCHARGE_POWER_W,
     CONF_INVERTER_TYPE,
     INVERTER_TYPE_BI,
     REG_BATTERY_WORK_CAPACITY,
@@ -208,10 +208,10 @@ class KostalCoordinator(DataUpdateCoordinator[dict[Any, Any]]):
                 REG_BATTERY_TEMP,
                 REG_BATTERY_MAX_CHARGE_LIMIT,
                 REG_BATTERY_MAX_DISCHARGE_LIMIT,
-                REG_CHARGE_DISCHARGE_LIMIT,
-                REG_CHARGE_DISCHARGE_LIMIT_BI,
-                REG_CHARGE_RATE,
-                REG_DISCHARGE_RATE,
+                REG_BATTERY_DC_CURRENT_SETPOINT_REL,
+                REG_BATTERY_AC_POWER_SETPOINT_REL,
+                REG_BATTERY_MAX_CHARGE_POWER_W,
+                REG_BATTERY_MAX_DISCHARGE_POWER_W,
                 REG_BATTERY_WORK_CAPACITY,
                 REG_BATTERY_CURRENT,
                 REG_BATTERY_CYCLES,
@@ -330,7 +330,7 @@ class KostalData:
     predbat_status: str = "Inactive"
     inverter_model: str = ""
     inverter_power_class: str = ""
-    charge_discharge_reg: int = REG_CHARGE_DISCHARGE_LIMIT
+    charge_discharge_reg: int = REG_BATTERY_DC_CURRENT_SETPOINT_REL
     # User setpoints from the SOC limit numbers. The defaults equal the
     # inverter's own limits, i.e. "not in use". The number entities own the
     # register writes — see KostalSocLimitNumber in number.py.
@@ -441,7 +441,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     
     inverter_type = entry.data.get(CONF_INVERTER_TYPE, "hybrid")
-    charge_discharge_reg = REG_CHARGE_DISCHARGE_LIMIT_BI if inverter_type == INVERTER_TYPE_BI else REG_CHARGE_DISCHARGE_LIMIT
+    charge_discharge_reg = REG_BATTERY_AC_POWER_SETPOINT_REL if inverter_type == INVERTER_TYPE_BI else REG_BATTERY_DC_CURRENT_SETPOINT_REL
     _LOGGER.info("Inverter type=%r → charge/discharge register=%d", inverter_type, charge_discharge_reg)
 
     # Set up KSEM handler if configured

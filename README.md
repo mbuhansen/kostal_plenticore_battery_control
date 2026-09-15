@@ -303,9 +303,9 @@ so a single missing diagnostic register made *all* entities unavailable
 
 ## Technical Details
 
-*   **Control Register:** `1028` (Hybrid) / `1030` (BI) — charge/discharge power as a signed percentage (negative = charge, positive = discharge). Selected by the inverter type chosen during setup.
-*   **Limit Registers:** `1076` / `1078` — Physical battery charge/discharge limits.
-*   **Block Registers:** `1038` / `1040` — Battery charge/discharge rate limits (set to 0 for blocking).
+*   **Control Register:** `1028` (Hybrid) / `1030` (BI) — signed relative setpoint (negative = charge, positive = discharge). `1028` is the battery charge current (DC) setpoint for hybrid inverters, where the battery is DC-coupled; `1030` is the battery charge power (AC) setpoint for the AC-coupled PLENTICORE BI. Both are percentages of the inverter's nominal value (Inom / Pnom). Selected by the inverter type chosen during setup.
+*   **Limit Registers:** `1076` / `1078` — Maximum charge/discharge power limits read out from the battery.
+*   **Block Registers:** `1038` / `1040` — Battery max. charge/discharge power limits. Only used for blocking: written to 0 to block, and restored to the battery's own maximum (`1076` / `1078`) afterwards.
 *   **SOC Limit Registers:** `1042` / `1044` — Minimum/maximum SOC. Only in effect while actively written.
 *   **I/O Output Registers:** `608` / `609` / `610` / `611` — I/O board switched outputs.
 *   **Inverter State Register:** `56` — Inverter state2 as U32. Follows the inverter's Modbus byte-order setting (register `5`), like the float registers do.

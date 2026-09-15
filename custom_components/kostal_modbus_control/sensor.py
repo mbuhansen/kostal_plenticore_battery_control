@@ -42,10 +42,10 @@ from .const import (
     REG_BATTERY_TEMP,
     REG_BATTERY_MAX_CHARGE_LIMIT,
     REG_BATTERY_MAX_DISCHARGE_LIMIT,
-    REG_CHARGE_DISCHARGE_LIMIT,
-    REG_CHARGE_DISCHARGE_LIMIT_BI,
-    REG_CHARGE_RATE,
-    REG_DISCHARGE_RATE,
+    REG_BATTERY_DC_CURRENT_SETPOINT_REL,
+    REG_BATTERY_AC_POWER_SETPOINT_REL,
+    REG_BATTERY_MAX_CHARGE_POWER_W,
+    REG_BATTERY_MAX_DISCHARGE_POWER_W,
     REG_BATTERY_WORK_CAPACITY,
     REG_BATTERY_MGMT_MODE,
     BATTERY_MGMT_MODE_MAP,
@@ -268,7 +268,7 @@ class KostalTotalActivePowerSensor(KostalBaseSensor):
 class KostalBatteryChargeCurrentSetpointSensor(KostalBaseSensor):
     _key = SENSOR_BATTERY_CHARGE_CURRENT_SETPOINT
     _name = "Battery Charge Current Setpoint"
-    _address = REG_CHARGE_DISCHARGE_LIMIT
+    _address = REG_BATTERY_DC_CURRENT_SETPOINT_REL
     _attr_device_class = None
     _attr_native_unit_of_measurement = PERCENTAGE
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -279,7 +279,7 @@ class KostalBatteryChargeCurrentSetpointSensor(KostalBaseSensor):
 class KostalBatteryChargePowerSetpointSensor(KostalBaseSensor):
     _key = SENSOR_BATTERY_CHARGE_POWER_SETPOINT
     _name = "Battery Charge Power Setpoint"
-    _address = REG_CHARGE_DISCHARGE_LIMIT_BI
+    _address = REG_BATTERY_AC_POWER_SETPOINT_REL
     _attr_device_class = None
     _attr_native_unit_of_measurement = PERCENTAGE
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -289,8 +289,8 @@ class KostalBatteryChargePowerSetpointSensor(KostalBaseSensor):
 
 class KostalBatteryMaxChargePowerLimitSensor(KostalBaseSensor):
     _key = SENSOR_BATTERY_MAX_CHARGE_POWER_LIMIT
-    _name = "Battery Max Charge Power Setpoint"
-    _address = REG_CHARGE_RATE
+    _name = "Battery Max Charge Power Limit"
+    _address = REG_BATTERY_MAX_CHARGE_POWER_W
     _attr_device_class = SensorDeviceClass.POWER
     _attr_native_unit_of_measurement = UnitOfPower.WATT
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -300,8 +300,8 @@ class KostalBatteryMaxChargePowerLimitSensor(KostalBaseSensor):
 
 class KostalBatteryMaxDischargePowerLimitSensor(KostalBaseSensor):
     _key = SENSOR_BATTERY_MAX_DISCHARGE_POWER_LIMIT
-    _name = "Battery Max Discharge Power Setpoint"
-    _address = REG_DISCHARGE_RATE
+    _name = "Battery Max Discharge Power Limit"
+    _address = REG_BATTERY_MAX_DISCHARGE_POWER_W
     _attr_device_class = SensorDeviceClass.POWER
     _attr_native_unit_of_measurement = UnitOfPower.WATT
     _attr_state_class = SensorStateClass.MEASUREMENT

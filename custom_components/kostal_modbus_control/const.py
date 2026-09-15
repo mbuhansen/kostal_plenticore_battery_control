@@ -27,11 +27,14 @@ REST_VERSION_PATH = "/api/v1/info/version"
 REST_VERSION_TIMEOUT_SECONDS = 10
 REST_VERSION_RETRY_SECONDS = 600  # After a failed fetch, e.g. web server still starting
 REG_INVERTER_STATE = 56       # Inverter state - U32 (0x38)
-REG_CHARGE_DISCHARGE_LIMIT = 1028      # Hybrid: Controls max charge/discharge power (%)
-REG_CHARGE_DISCHARGE_LIMIT_BI = 1030   # BI: Controls max charge/discharge power (%)
-REG_POWER_LIMIT_W = 1034               # Power Limit (Watts) - Negative=Charge, Positive=Discharge
-REG_CHARGE_RATE = 1038            # Battery Charge Rate (Watts) - Positive
-REG_DISCHARGE_RATE = 1040         # Battery Discharge Rate (Watts) - Positive
+# External battery management (Kostal Modbus doc section 3.4). Setpoints are
+# signed: negative = charge, positive = discharge. Relative setpoints are in
+# % of the inverter's nominal value (Inom or Pnom).
+REG_BATTERY_DC_CURRENT_SETPOINT_REL = 1028  # Battery charge current (DC) setpoint, relative (%) - Float (0x404) RW. Used for hybrid inverters
+REG_BATTERY_AC_POWER_SETPOINT_REL = 1030    # Battery charge power (AC) setpoint, relative (%) - Float (0x406) RW. PLENTICORE BI and (MP) G3 only; used for BI
+REG_BATTERY_DC_POWER_SETPOINT_W = 1034      # Battery charge power (DC) setpoint, absolute (W) - Float (0x40A) RW. Currently unused
+REG_BATTERY_MAX_CHARGE_POWER_W = 1038       # Battery max. charge power limit, absolute (W) - Float (0x40E) RW. Written 0 to block charging
+REG_BATTERY_MAX_DISCHARGE_POWER_W = 1040    # Battery max. discharge power limit, absolute (W) - Float (0x410) RW. Written 0 to block discharging
 REG_BATTERY_MIN_SOC = 1042        # Minimum SOC % - Float (0x412) RW
 REG_BATTERY_MAX_SOC = 1044        # Maximum SOC % - Float (0x414) RW
 
@@ -98,8 +101,8 @@ INVERTER_STATE_MAP = {
     18: "Unknown",
 }
 
-REG_BATTERY_MAX_CHARGE_LIMIT = 1076    # Max Charge Limit (W) - Float
-REG_BATTERY_MAX_DISCHARGE_LIMIT = 1078 # Max Discharge Limit (W) - Float
+REG_BATTERY_MAX_CHARGE_LIMIT = 1076    # Maximum charge power limit, read-out from battery (W) - Float
+REG_BATTERY_MAX_DISCHARGE_LIMIT = 1078 # Maximum discharge power limit, read-out from battery (W) - Float
 REG_BATTERY_WORK_CAPACITY = 1068       # Battery work capacity (Wh) - Float
 REG_BATTERY_MGMT_MODE = 1080          # Battery management mode - U8
 
@@ -234,7 +237,7 @@ PREDBAT_HOLD_DELTA = 1.0
 # Grid connection point export threshold (Watts) that must be sustained for
 # PREDBAT_LOW_POWER_SUSPEND_DELAY_SECONDS before the low-power charge loop
 # stops writing the charge setpoint, letting the inverter's own timeout on
-# register 1034 expire and fall back to internal 0-export self-consumption
+# register 1028/1030 expire and fall back to internal 0-export self-consumption
 # control (which reacts faster than this integration's own loop).
 PREDBAT_LOW_POWER_EXPORT_THRESHOLD_WATTS = 100.0
 PREDBAT_LOW_POWER_SUSPEND_DELAY_SECONDS = 30.0
