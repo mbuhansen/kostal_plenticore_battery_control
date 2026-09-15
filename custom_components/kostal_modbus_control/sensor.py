@@ -108,7 +108,6 @@ from .const import (
     SENSOR_TYPE_MAP,
     SENSOR_INVERTER_CONTROL_STATUS,
     SENSOR_INVERTER_CONTROL_TARGET_POWER,
-    SENSOR_INVERTER_CONTROL_TARGET_PERCENT,
     SENSOR_INVERTER_CONTROL_HOUSE_LOAD,
     SIGNAL_EMS_STATUS_UPDATED,
     SIGNAL_INVERTER_CONTROL_UPDATED,
@@ -221,7 +220,6 @@ async def async_setup_entry(
         entities.extend([
             KostalInverterControlStatusSensor(data, entry.entry_id),
             KostalInverterControlTargetPowerSensor(data, entry.entry_id),
-            KostalInverterControlTargetPercentSensor(data, entry.entry_id),
             KostalInverterControlHouseLoadSensor(data, entry.entry_id),
         ])
 
@@ -621,18 +619,6 @@ class KostalInverterControlTargetPowerSensor(KostalInverterControlBaseSensor):
     @property
     def native_value(self) -> float | None:
         return self._data.inverter_control_target_w
-
-
-class KostalInverterControlTargetPercentSensor(KostalInverterControlBaseSensor):
-    _attr_native_unit_of_measurement = PERCENTAGE
-    _attr_state_class = SensorStateClass.MEASUREMENT
-
-    def __init__(self, data, entry_id: str) -> None:
-        super().__init__(data, entry_id, SENSOR_INVERTER_CONTROL_TARGET_PERCENT, "Inverter Control Target Percent")
-
-    @property
-    def native_value(self) -> float | None:
-        return self._data.inverter_control_target_pct
 
 
 class KostalInverterControlHouseLoadSensor(KostalInverterControlBaseSensor):

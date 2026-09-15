@@ -148,7 +148,7 @@ Without a smart meter the inverter cannot see grid import and export, so its own
 - The grid reading plus the battery power gives the house load the battery has to cover. PV surplus makes it negative. This load is smoothed with an exponential moving average.
 - The battery setpoint is the smoothed load minus **Grid target**: a positive load → discharge, a negative load (surplus) → charge.
 - While the grid is within **Grid deadband** of the target, the battery keeps its current setpoint (`Grid Idle`).
-- The setpoint is capped by **Max discharge / Max charge power** and by the battery's own limits (registers `1078`/`1076`), then written as a percentage to the charge/discharge register (`1028` or `1030`).
+- The setpoint is capped by **Max discharge / Max charge power** and by the maximum battery control power, then written in Watts to the power setpoint register (`1034` on a hybrid, `1026` on a BI).
 - The written setpoint only changes when the new value differs by more than **Setpoint hysteresis**, so the inverter is not chased by small fluctuations.
 - If the grid entity or the battery data is unavailable, `0` is written and the status is `Unavailable`.
 - When the switch is turned off, `0` is written and the inverter falls back to its internal control after its Modbus timeout.
@@ -170,8 +170,7 @@ Deadband, hysteresis and smoothing work together: the grid settles within roughl
 | Sensor | Description |
 |---|---|
 | Inverter Control Status | `Inactive`, `Grid Support`, `Grid Idle` or `Unavailable` |
-| Inverter Control Target Power | Current battery setpoint in W (+ discharge, − charge) |
-| Inverter Control Target Percent | The setpoint as written to the register |
+| Inverter Control Target Power | Current battery setpoint in W (+ discharge, − charge), as written to the register |
 | Inverter Control House Load | The smoothed house load (grid + battery) the control regulates on |
 
 ### Numbers (Settings)

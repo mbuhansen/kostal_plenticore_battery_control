@@ -1263,12 +1263,10 @@ class KostalInverterControlSwitch(KostalBaseSwitch, RestoreEntity):
         status: str,
         *,
         target_watts: float | None = None,
-        target_pct: float | None = None,
         house_load_w: float | None = None,
     ) -> None:
         self._data.inverter_control_status = status
         self._data.inverter_control_target_w = target_watts
-        self._data.inverter_control_target_pct = target_pct
         self._data.inverter_control_house_load_w = house_load_w
         async_dispatcher_send(self.hass, f"{SIGNAL_INVERTER_CONTROL_UPDATED}_{self._entry_id}")
 
@@ -1331,10 +1329,16 @@ class KostalInverterControlSwitch(KostalBaseSwitch, RestoreEntity):
         }
 
     def _clamp_target_watts(self, target_watts: float) -> float:
+        """Cap the target by the configured maximum and the maximum battery control power."""
+        max_power = self._data.max_battery_power_step_w()
         if target_watts > 0.0:
-            discharge_cap = min(self._data.external_control_max_discharge_w, self._max_discharge_watts())
+            discharge_cap = self._data.external_control_max_discharge_w
+            if max_power is not None:
+                discharge_cap = min(discharge_cap, max_power)
             return min(target_watts, max(0.0, discharge_cap))
-        charge_cap = min(self._data.external_control_max_charge_w, self._max_charge_watts())
+        charge_cap = self._data.external_control_max_charge_w
+        if max_power is not None:
+            charge_cap = min(charge_cap, max_power)
         return max(target_watts, -max(0.0, charge_cap))
 
     def _grid_target_watts(self, inputs: dict[str, float]) -> tuple[float, str]:
@@ -1360,19 +1364,6 @@ class KostalInverterControlSwitch(KostalBaseSwitch, RestoreEntity):
             return proposed_watts
         return last_target
 
-    def _pct_from_target_watts(self, target_watts: float) -> float:
-        if target_watts > 0.0:
-            max_discharge_watts = self._max_discharge_watts()
-            if max_discharge_watts <= 0.0:
-                return 0.0
-            return round(min(100.0, (target_watts / max_discharge_watts) * 100.0), 1)
-        if target_watts < 0.0:
-            max_charge_watts = self._max_charge_watts()
-            if max_charge_watts <= 0.0:
-                return 0.0
-            return -round(min(100.0, (-target_watts / max_charge_watts) * 100.0), 1)
-        return 0.0
-
     async def _loop_action(self, *args):
         if not self._attr_is_on:
             return
@@ -1392,35 +1383,32 @@ class KostalInverterControlSwitch(KostalBaseSwitch, RestoreEntity):
         inputs = self._grid_inputs(battery_power)
         if inputs is None:
             self._publish_state("Unavailable")
-            await self._data.handler.write_float(self._data.charge_discharge_reg, 0.0)
+            await self._write_power_setpoint(0.0)
             return
 
         filtered_house_load = inputs["filtered_house_load"]
         proposed_watts, status = self._grid_target_watts(inputs)
         target_watts = self._smoothed_target_watts(proposed_watts)
-        target_pct = self._pct_from_target_watts(target_watts)
         self._publish_state(
             status,
             target_watts=target_watts,
-            target_pct=target_pct,
             house_load_w=filtered_house_load,
         )
         _LOGGER.debug(
-            "Inverter Control: raw_grid=%.1fW battery=%.1fW filtered_load=%.1fW grid_target=%.1fW proposed=%.1fW target=%.1fW target_pct=%s%% status=%s",
+            "Inverter Control: raw_grid=%.1fW battery=%.1fW filtered_load=%.1fW grid_target=%.1fW proposed=%.1fW target=%.1fW status=%s",
             inputs["raw_grid_power"],
             inputs["battery_power"],
             filtered_house_load,
             self._data.grid_target_w,
             proposed_watts,
             target_watts,
-            target_pct,
             status,
         )
-        await self._data.handler.write_float(self._data.charge_discharge_reg, target_pct)
+        await self._write_power_setpoint(target_watts)
 
     async def _stop_action(self):
         self._data.last_stop_time = time.time()
-        await self._data.handler.write_float(self._data.charge_discharge_reg, 0.0)
+        await self._write_power_setpoint(0.0)
         self._data.last_inverter_control_setpoint_w = None
         self._data.last_inverter_control_filtered_load_w = None
         self._publish_state("Inactive")

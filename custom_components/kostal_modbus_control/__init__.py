@@ -385,7 +385,6 @@ class KostalData:
     last_inverter_control_filtered_load_w: float | None = None
     inverter_control_status: str = "Inactive"
     inverter_control_target_w: float | None = None
-    inverter_control_target_pct: float | None = None
     inverter_control_house_load_w: float | None = None
 
     def register_runtime_switch(self, switch: Any) -> None:
