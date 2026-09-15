@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -38,10 +39,12 @@ from .const import (
     REG_BATTERY_TEMP,
     REG_BATTERY_MAX_CHARGE_LIMIT,
     REG_BATTERY_MAX_DISCHARGE_LIMIT,
-    REG_BATTERY_DC_CURRENT_SETPOINT_REL,
-    REG_BATTERY_AC_POWER_SETPOINT_REL,
+    REG_BATTERY_DC_POWER_SETPOINT_W,
+    REG_BATTERY_AC_POWER_SETPOINT_W,
     REG_BATTERY_MAX_CHARGE_POWER_W,
     REG_BATTERY_MAX_DISCHARGE_POWER_W,
+    BATTERY_NOMINAL_CURRENT_BY_GENERATION,
+    BI_NOMINAL_POWER_BY_POWER_CLASS,
     CONF_INVERTER_TYPE,
     INVERTER_TYPE_BI,
     REG_BATTERY_WORK_CAPACITY,
@@ -64,6 +67,7 @@ from .const import (
     REG_BATTERY_MAX_SOC,
     DEFAULT_MIN_SOC_LIMIT,
     DEFAULT_MAX_SOC_LIMIT,
+    POWER_RATE_FALLBACK_MAX_W,
     REG_CURRENT_PHASE1,
     REG_CURRENT_PHASE2,
     REG_CURRENT_PHASE3,
@@ -208,8 +212,8 @@ class KostalCoordinator(DataUpdateCoordinator[dict[Any, Any]]):
                 REG_BATTERY_TEMP,
                 REG_BATTERY_MAX_CHARGE_LIMIT,
                 REG_BATTERY_MAX_DISCHARGE_LIMIT,
-                REG_BATTERY_DC_CURRENT_SETPOINT_REL,
-                REG_BATTERY_AC_POWER_SETPOINT_REL,
+                REG_BATTERY_DC_POWER_SETPOINT_W,
+                REG_BATTERY_AC_POWER_SETPOINT_W,
                 REG_BATTERY_MAX_CHARGE_POWER_W,
                 REG_BATTERY_MAX_DISCHARGE_POWER_W,
                 REG_BATTERY_WORK_CAPACITY,
@@ -269,6 +273,7 @@ class KostalCoordinator(DataUpdateCoordinator[dict[Any, Any]]):
                 data[key] = await self._read_optional(key, description, read)
             if REG_SOFTWARE_VERSION in self._unsupported:
                 data[REG_SOFTWARE_VERSION] = await self._async_rest_software_version()
+            self._kostal_data.update_observed_battery_current(data)
             # KSEM energy registers (separate handler, optional)
             ksem = self._kostal_data.ksem_handler
             if ksem is not None:
@@ -320,17 +325,23 @@ PLATFORMS: list[Platform] = [Platform.SWITCH, Platform.NUMBER, Platform.SENSOR]
 class KostalData:
     handler: KostalModbusHandler
     coordinator: KostalCoordinator | None = None
-    charge_rate: float = 100.0
-    discharge_rate: float = 100.0
+    # User-set charge/discharge rates in Watts. None means the rate follows the
+    # maximum battery control power — see charge_power_w().
+    charge_power_fixed_w: float | None = None
+    discharge_power_fixed_w: float | None = None
     fuse_size: float = 25.0
     last_stop_time: float = 0.0
     inverter_timeout: int = DEFAULT_MODBUS_TIMEOUT
     ems_status: str = "Inactive"
-    ems_charge_limit_pct: float = 100.0
+    ems_charge_limit_w: float | None = None
     predbat_status: str = "Inactive"
     inverter_model: str = ""
     inverter_power_class: str = ""
-    charge_discharge_reg: int = REG_BATTERY_DC_CURRENT_SETPOINT_REL
+    # Absolute power setpoint register: 1034 (DC) for hybrid, 1026 (AC) for BI
+    charge_discharge_reg: int = REG_BATTERY_DC_POWER_SETPOINT_W
+    # Highest 1078 / battery voltage seen this session, see max_battery_power_w()
+    battery_nominal_current_observed: float | None = None
+    scaling_warnings_logged: set[str] = field(default_factory=set)
     # User setpoints from the SOC limit numbers. The defaults equal the
     # inverter's own limits, i.e. "not in use". The number entities own the
     # register writes — see KostalSocLimitNumber in number.py.
@@ -346,6 +357,123 @@ class KostalData:
 
     def register_runtime_switch(self, switch: Any) -> None:
         self.runtime_switches[switch._key] = switch
+
+    @property
+    def is_battery_inverter(self) -> bool:
+        """True for a PLENTICORE BI, which is controlled through the AC setpoint."""
+        return self.charge_discharge_reg == REG_BATTERY_AC_POWER_SETPOINT_W
+
+    def _warn_once(self, key: str, message: str, *args: Any) -> None:
+        if key in self.scaling_warnings_logged:
+            return
+        self.scaling_warnings_logged.add(key)
+        _LOGGER.warning(message, *args)
+
+    def update_observed_battery_current(self, data: dict) -> None:
+        """Track the highest nominal battery current seen, as 1078 / battery voltage.
+
+        On a G3, register 1078 is exactly the nominal battery current times the
+        actual battery voltage. A BMS derating lowers 1078, so the highest value
+        of the session is kept instead of the latest.
+        """
+        voltage = data.get(REG_BATTERY_VOLTAGE)
+        max_discharge = data.get(REG_BATTERY_MAX_DISCHARGE_LIMIT)
+        if not voltage or voltage <= 0.0 or not max_discharge or max_discharge <= 0.0:
+            return
+        current = max_discharge / voltage
+        observed = self.battery_nominal_current_observed
+        if observed is None or current > observed:
+            self.battery_nominal_current_observed = current
+            _LOGGER.debug("Observed nominal battery current %.2f A (1078=%.0f W, V=%.1f V)", current, max_discharge, voltage)
+
+    def documented_battery_nominal_current(self) -> float | None:
+        """Documented nominal battery current of the inverter generation, or None when unknown."""
+        if self.coordinator is None or self.coordinator.data is None:
+            return None
+        version = self.coordinator.data.get(REG_SOFTWARE_VERSION)
+        if not version:
+            return None
+        try:
+            current = BATTERY_NOMINAL_CURRENT_BY_GENERATION.get(int(str(version).strip().split(".")[0]))
+        except ValueError:
+            current = None
+        if current is None:
+            self._warn_once(
+                f"version:{version}",
+                "Unknown inverter generation for software version %r — the maximum battery control power "
+                "is not capped by a documented battery current",
+                version,
+            )
+        return current
+
+    def max_battery_power_w(self) -> float | None:
+        """Maximum battery control power in Watts, or None when it cannot be determined.
+
+        Hybrid: battery voltage times the nominal battery current, where that
+        current is the highest observed 1078 / voltage, capped by the documented
+        current of the inverter generation. BI: the nominal AC power from the
+        power class, or the battery's discharge limit 1078 when the power class
+        is unknown.
+        """
+        data = self.coordinator.data if self.coordinator is not None else None
+        if data is None:
+            return None
+
+        if self.is_battery_inverter:
+            power_class = (self.inverter_power_class or "").strip()
+            match = re.search(r"\d+(?:[.,]\d+)?", power_class)
+            if match is not None:
+                nominal_power = BI_NOMINAL_POWER_BY_POWER_CLASS.get(float(match.group().replace(",", ".")))
+                if nominal_power is not None:
+                    return nominal_power
+            self._warn_once(
+                f"power_class:{power_class}",
+                "Unknown PLENTICORE BI power class %r — using the battery discharge limit 1078 as maximum power",
+                power_class,
+            )
+            max_discharge = data.get(REG_BATTERY_MAX_DISCHARGE_LIMIT)
+            return max_discharge if max_discharge and max_discharge > 0.0 else None
+
+        voltage = data.get(REG_BATTERY_VOLTAGE)
+        if not voltage or voltage <= 0.0:
+            return None
+        observed = self.battery_nominal_current_observed
+        documented = self.documented_battery_nominal_current()
+        if observed is not None and documented is not None:
+            current = min(observed, documented)
+        else:
+            current = observed if observed is not None else documented
+        if current is None:
+            return None
+        return voltage * current
+
+    def charge_power_w(self) -> float:
+        """Charge rate in Watts: the user's fixed value, or the maximum control power."""
+        return self._power_rate_w(self.charge_power_fixed_w)
+
+    def discharge_power_w(self) -> float:
+        """Discharge rate in Watts: the user's fixed value, or the maximum control power."""
+        return self._power_rate_w(self.discharge_power_fixed_w)
+
+    def _power_rate_w(self, fixed_w: float | None) -> float:
+        if fixed_w is not None:
+            return fixed_w
+        max_power = self.max_battery_power_w()
+        if max_power is None:
+            self._warn_once(
+                "max_power_unknown",
+                "Maximum battery control power is not known yet — using %.0f W and letting the inverter clamp it",
+                POWER_RATE_FALLBACK_MAX_W,
+            )
+            return POWER_RATE_FALLBACK_MAX_W
+        return max_power
+
+    def clamp_power_setpoint_w(self, watts: float) -> float:
+        """Clamp a signed power setpoint to plus/minus the maximum control power."""
+        max_power = self.max_battery_power_w()
+        if max_power is None:
+            return watts
+        return max(-max_power, min(max_power, watts))
 
     def mark_communication_lost(self, error: str | None) -> None:
         self.communication_ok = False
@@ -441,7 +569,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     
     inverter_type = entry.data.get(CONF_INVERTER_TYPE, "hybrid")
-    charge_discharge_reg = REG_BATTERY_AC_POWER_SETPOINT_REL if inverter_type == INVERTER_TYPE_BI else REG_BATTERY_DC_CURRENT_SETPOINT_REL
+    charge_discharge_reg = REG_BATTERY_AC_POWER_SETPOINT_W if inverter_type == INVERTER_TYPE_BI else REG_BATTERY_DC_POWER_SETPOINT_W
     _LOGGER.info("Inverter type=%r → charge/discharge register=%d", inverter_type, charge_discharge_reg)
 
     # Set up KSEM handler if configured

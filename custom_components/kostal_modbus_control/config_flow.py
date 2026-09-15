@@ -85,8 +85,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_INVERTER_TYPE, default=INVERTER_TYPE_HYBRID): SelectSelector(
                     SelectSelectorConfig(
                         options=[
-                            {"value": INVERTER_TYPE_HYBRID, "label": "Plenticore Hybrid (reg. 1028)"},
-                            {"value": INVERTER_TYPE_BI, "label": "Plenticore BI / Battery Inverter (reg. 1030)"},
+                            {"value": INVERTER_TYPE_HYBRID, "label": "Plenticore Hybrid (reg. 1034)"},
+                            {"value": INVERTER_TYPE_BI, "label": "Plenticore BI / Battery Inverter (reg. 1026)"},
                         ],
                         mode=SelectSelectorMode.LIST,
                     )

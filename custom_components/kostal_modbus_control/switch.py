@@ -48,6 +48,11 @@ from .const import (
     PREDBAT_LOW_POWER_EXPORT_THRESHOLD_WATTS,
     PREDBAT_LOW_POWER_SUSPEND_DELAY_SECONDS,
     PREDBAT_LOW_POWER_RESUME_TOLERANCE_FRACTION,
+    PREDBAT_LOW_POWER_RESUME_TOLERANCE_FRACTION_BI,
+    POWER_RATE_STEP_W,
+    REG_VOLTAGE_PHASE1,
+    REG_VOLTAGE_PHASE2,
+    REG_VOLTAGE_PHASE3,
     SWITCH_IO_OUTPUT_2,
     SWITCH_IO_OUTPUT_3,
     SWITCH_IO_OUTPUT_4,
@@ -340,7 +345,7 @@ class KostalBaseSwitch(SwitchEntity):
                 return
 
         # Kør pre-start (f.eks. nulstil 1038/1040) først efter eventuel ventetid,
-        # så ingen Modbus-besked nulstiller inverterens 1028/1030-timeout under ventetiden.
+        # så ingen Modbus-besked nulstiller inverterens timeout på effekt-setpunktet under ventetiden.
         if not await self._run_guarded_action(self._pre_start_action, "pre-start"):
             return
         if not self._attr_is_on:
@@ -397,7 +402,18 @@ class KostalBaseSwitch(SwitchEntity):
         await self._data.handler.write_float(REG_BATTERY_MAX_DISCHARGE_POWER_W, max_discharge_watts)
         return True
 
-    def _stop_signed_pct_from_active_power(self) -> float:
+    async def _write_power_setpoint(self, watts: float) -> None:
+        """Write a signed battery power setpoint in Watts (negative = charge).
+
+        Clamped to the maximum battery control power, then written to the
+        absolute setpoint register — 1034 (DC) on hybrid inverters, 1026 (AC)
+        on the BI.
+        """
+        setpoint = round(self._data.clamp_power_setpoint_w(watts))
+        _LOGGER.debug("%s: power setpoint %s W to register %d", self.name, setpoint, self._data.charge_discharge_reg)
+        await self._data.handler.write_float(self._data.charge_discharge_reg, float(setpoint))
+
+    def _stop_setpoint_watts_from_active_power(self) -> float:
         """Estimate a signed stop setpoint from grid-point power and battery power.
 
         For a smart meter at the grid connection point, register 252 is:
@@ -411,7 +427,7 @@ class KostalBaseSwitch(SwitchEntity):
         Adding the two removes the battery contribution and gives an estimate of
         the underlying house demand seen at the grid point.
 
-        Result:
+        Result, in Watts and clamped to the maximum battery control power:
         - positive setpoint when the house still needs battery discharge
         - negative setpoint when PV surplus is available for battery charge
         """
@@ -422,8 +438,6 @@ class KostalBaseSwitch(SwitchEntity):
 
         total_active_power = coordinator.data.get(REG_TOTAL_ACTIVE_POWER)
         battery_power = coordinator.data.get(REG_BATTERY_POWER)
-        max_discharge_watts = self._max_discharge_watts()
-        max_charge_watts = self._max_charge_watts()
 
         if total_active_power is None or battery_power is None:
             _LOGGER.debug(
@@ -436,48 +450,23 @@ class KostalBaseSwitch(SwitchEntity):
         # Gridpoint meter: import is positive, feed-in is negative.
         # Battery power is negative while charging and positive while discharging.
         # Summing them estimates the net load after PV contribution, which is
-        # then converted to a signed stop setpoint.
+        # the signed stop setpoint.
         net_load_after_pv_watts = total_active_power + battery_power
-
-        if net_load_after_pv_watts >= 0.0:
-            if max_discharge_watts <= 0.0:
-                _LOGGER.debug(
-                    "Stop setpoint: discharge max unavailable total_active_power=%s battery_power=%s max_discharge_watts=%s",
-                    total_active_power,
-                    battery_power,
-                    max_discharge_watts,
-                )
-                return 0.0
-
-            target_pct = min(100.0, (net_load_after_pv_watts / max_discharge_watts) * 100.0)
-            signed_stop_pct = round(target_pct, 1)
-        else:
-            if max_charge_watts <= 0.0:
-                _LOGGER.debug(
-                    "Stop setpoint: charge max unavailable total_active_power=%s battery_power=%s max_charge_watts=%s",
-                    total_active_power,
-                    battery_power,
-                    max_charge_watts,
-                )
-                return 0.0
-
-            target_pct = min(100.0, (-net_load_after_pv_watts / max_charge_watts) * 100.0)
-            signed_stop_pct = -round(target_pct, 1)
+        stop_setpoint_watts = round(self._data.clamp_power_setpoint_w(net_load_after_pv_watts))
 
         _LOGGER.debug(
-            "Stop setpoint: total_active_power=%.1fW battery_power=%.1fW net_load_after_pv=%.1fW max_charge=%.1fW max_discharge=%.1fW signed_stop_pct=%s%%",
+            "Stop setpoint: total_active_power=%.1fW battery_power=%.1fW net_load_after_pv=%.1fW max_power=%s stop_setpoint=%sW",
             total_active_power,
             battery_power,
             net_load_after_pv_watts,
-            max_charge_watts,
-            max_discharge_watts,
-            signed_stop_pct,
+            self._data.max_battery_power_w(),
+            stop_setpoint_watts,
         )
 
-        return signed_stop_pct
+        return float(stop_setpoint_watts)
 
     async def _pre_start_action(self):
-        """Køres straks ved start, inden eventuel ventetid på 1028/1030."""
+        """Køres straks ved start, inden eventuel ventetid på effekt-setpunktet."""
         pass
 
     async def _loop_action(self, *args):
@@ -556,13 +545,11 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
             )
             return None
 
-    def _predbat_low_power_charge_pct(self) -> float | None:
-        """Return the Predbat low power charge rate as a percentage of max charge capacity.
+    def _predbat_low_power_charge_watts(self) -> float | None:
+        """Return the Predbat low power charge rate in Watts.
 
-        Reads input_number.predbat_charge_rate (Watts) and converts it to a
-        percentage using the battery's maximum charge power. Returns None when
-        low power mode is inactive, when the entity is unavailable, or when the
-        battery maximum charge limit is unknown.
+        Reads input_number.predbat_charge_rate. Returns None when low power
+        mode is inactive or when the entity is unavailable.
         """
         if not self._is_predbat_low_power_active():
             return None
@@ -570,20 +557,19 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         rate_watts = self._predbat_low_power_rate_watts()
         if rate_watts is None:
             return None
+        return max(0.0, rate_watts)
 
-        max_charge_watts = self._max_charge_watts()
-        if max_charge_watts <= 0.0:
-            _LOGGER.warning("Predbat low power: max charge limit unavailable, cannot convert to %%")
-            return None
-
-        return min(100.0, (rate_watts / max_charge_watts) * 100.0)
+    def _predbat_low_power_resume_tolerance(self) -> float:
+        if self._data.is_battery_inverter:
+            return PREDBAT_LOW_POWER_RESUME_TOLERANCE_FRACTION_BI
+        return PREDBAT_LOW_POWER_RESUME_TOLERANCE_FRACTION
 
     def _predbat_low_power_export_suspend_check(self) -> bool:
         """Suspend/resume the low-power charge setpoint writes based on grid export.
 
         While the low-power charge rate is capping the charge target, sustained
         grid export means the inverter's own internal control (once the
-        register 1028/1030 write stops refreshing) will drive the grid point to 0
+        power setpoint write stops refreshing) will drive the grid point to 0
         faster than this integration's own loop can. When export has stayed
         at or below -PREDBAT_LOW_POWER_EXPORT_THRESHOLD_WATTS for
         PREDBAT_LOW_POWER_SUSPEND_DELAY_SECONDS, stop writing. Once suspended,
@@ -610,7 +596,8 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
 
             rate_watts = self._predbat_low_power_rate_watts() or 0.0
             charging_watts = -battery_power if battery_power < 0 else 0.0
-            resume_threshold_watts = rate_watts * (1 - PREDBAT_LOW_POWER_RESUME_TOLERANCE_FRACTION)
+            tolerance = self._predbat_low_power_resume_tolerance()
+            resume_threshold_watts = rate_watts * (1 - tolerance)
             if charging_watts >= resume_threshold_watts:
                 # Inverter is still meeting the low-power target (within
                 # tolerance) from PV alone.
@@ -620,7 +607,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                 "Predbat low power: charging power %.0fW below setpoint %.0fW (tolerance %.0f%%) — resuming charge setpoint writes",
                 charging_watts,
                 rate_watts,
-                PREDBAT_LOW_POWER_RESUME_TOLERANCE_FRACTION * 100,
+                tolerance * 100,
             )
             self._write_activity("Predbat low power: resuming charge setpoint (charging below target)")
             self._predbat_low_power_suspended = False
@@ -676,7 +663,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
             should_charge_now = soc <= charge_start_limit
         return soc, charge_start_limit, hold_limit, should_charge_now
 
-    def _predbat_charge_stop_pct(self) -> float:
+    def _predbat_charge_stop_watts(self) -> float:
         soc, charge_start_limit, hold_limit, should_charge_now = self._predbat_limit_decision()
         if should_charge_now is None:
             _LOGGER.warning(
@@ -685,7 +672,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                 charge_start_limit,
                 hold_limit,
             )
-            return self._stop_signed_pct_from_active_power()
+            return self._stop_setpoint_watts_from_active_power()
 
         if not should_charge_now:
             _LOGGER.info(
@@ -699,15 +686,15 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
             )
             return 0.0
 
-        signed_stop_pct = self._stop_signed_pct_from_active_power()
+        stop_setpoint_watts = self._stop_setpoint_watts_from_active_power()
         _LOGGER.info(
-            "Predbat Control: SOC=%.1f%% below active threshold (start_limit=%.1f%% hold_limit=%.1f%%) — using signed stop setpoint %s%%",
+            "Predbat Control: SOC=%.1f%% below active threshold (start_limit=%.1f%% hold_limit=%.1f%%) — using signed stop setpoint %sW",
             soc,
             charge_start_limit,
             hold_limit,
-            signed_stop_pct,
+            stop_setpoint_watts,
         )
-        return signed_stop_pct
+        return stop_setpoint_watts
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         if self._is_predbat_active():
@@ -741,12 +728,12 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         """Custom startup for Charge Start in Predbat mode.
 
         With Predbat enabled, evaluate the first charge or hold decision
-        immediately. Reads may continue and writes to 1028 are no longer
-        delayed during startup.
+        immediately. Reads may continue and writes to the power setpoint are no
+        longer delayed during startup.
         """
         if self._is_predbat_active():
             # Respect the same last_stop_time settling delay as the base class.
-            # A previous switch (e.g. Discharge Start) may have written to 1028 recently.
+            # A previous switch (e.g. Discharge Start) may have written the power setpoint recently.
             time_since_last_stop = time.time() - self._data.last_stop_time
             if time_since_last_stop < self._wait_time_before_start:
                 sleep_duration = self._wait_time_before_start - time_since_last_stop
@@ -769,7 +756,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                     charge_start_limit,
                     hold_limit,
                 )
-                # 1028 not written — no transition wait needed
+                # Power setpoint not written — no transition wait needed
                 self._predbat_was_charging = False
                 self._predbat_transition_time = None
                 self._set_predbat_status("Waiting")
@@ -796,7 +783,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                 self._write_activity(
                     f"Predbat startup: {'hold for car' if car_hold else 'hold'} because SOC={soc:.1f}% is above start limit {charge_start_limit:.1f}%"
                 )
-                # 1028 not written — inverter already in internal control, go directly to hold
+                # Power setpoint not written — inverter already in internal control, go directly to hold
                 self._predbat_was_charging = False
                 self._predbat_transition_time = None
                 self._set_predbat_status("Hold for car" if car_hold else "Hold")
@@ -818,10 +805,14 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         else:
             self._set_predbat_status("Inactive")
             # Normal charge — no Predbat Control
-            target_pct = self._data.charge_rate
-            if self._data.ems_status != "Inactive":
-                target_pct = min(target_pct, self._data.ems_charge_limit_pct)
-            await self._data.handler.write_float(self._data.charge_discharge_reg, -abs(target_pct))
+            await self._write_power_setpoint(-self._charge_target_watts())
+
+    def _charge_target_watts(self) -> float:
+        """Charge rate in Watts, capped by EMS Grid Protection while it is active."""
+        target_watts = abs(self._data.charge_power_w())
+        if self._data.ems_status != "Inactive" and self._data.ems_charge_limit_w is not None:
+            target_watts = min(target_watts, self._data.ems_charge_limit_w)
+        return target_watts
 
     async def _predbat_loop_action(self) -> None:
         """Predbat-aware loop: charge below best_charge_limit, otherwise hold SOC."""
@@ -861,22 +852,20 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
             if self._predbat_discharge_blocked or self._current_discharge_limit_watts() <= 0.0:
                 if await self._restore_max_discharge_limit():
                     self._predbat_discharge_blocked = False
-            charge_pct = abs(self._data.charge_rate)
-            if self._data.ems_status != "Inactive":
-                charge_pct = min(charge_pct, self._data.ems_charge_limit_pct)
-            low_power_pct = self._predbat_low_power_charge_pct()
-            if low_power_pct is not None and low_power_pct < charge_pct:
+            charge_watts = self._charge_target_watts()
+            low_power_watts = self._predbat_low_power_charge_watts()
+            if low_power_watts is not None and low_power_watts < charge_watts:
                 if not self._predbat_low_power_capping:
                     _LOGGER.info(
-                        "Predbat low power: capping charge rate from %.1f%% to %.1f%% (input_number.predbat_charge_rate)",
-                        charge_pct,
-                        low_power_pct,
+                        "Predbat low power: capping charge rate from %.0fW to %.0fW (input_number.predbat_charge_rate)",
+                        charge_watts,
+                        low_power_watts,
                     )
                     self._write_activity(
-                        f"Predbat low power: charge rate capped to {low_power_pct:.1f}%"
+                        f"Predbat low power: charge rate capped to {low_power_watts:.0f} W"
                     )
                     self._predbat_low_power_capping = True
-                charge_pct = low_power_pct
+                charge_watts = low_power_watts
 
                 if self._predbat_low_power_export_suspend_check():
                     self._set_predbat_status("Low Power Suspended")
@@ -894,11 +883,11 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                 return
             if self._predbat_startup_write_blocked():
                 return
-            await self._data.handler.write_float(self._data.charge_discharge_reg, -charge_pct)
+            await self._write_power_setpoint(-charge_watts)
             return
 
         if self._predbat_was_charging is None:
-            # 1028 was never written in this session — no transition wait needed
+            # Power setpoint was never written in this session — no transition wait needed
             self._predbat_was_charging = False
             self._predbat_transition_time = None
 
@@ -919,8 +908,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                 f"Predbat waiting 45s: SOC={soc:.1f}% >= hold limit {hold_limit:.1f}%"
             )
             self._set_predbat_status("Waiting")
-            signed_stop_pct = self._predbat_charge_stop_pct()
-            await self._data.handler.write_float(self._data.charge_discharge_reg, signed_stop_pct)
+            await self._write_power_setpoint(self._predbat_charge_stop_watts())
             self._predbat_transition_time = time.time()
             self._predbat_was_charging = False
             return
@@ -968,15 +956,14 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                     self._predbat_discharge_blocked = False
 
     async def _stop_action(self):
-        # Only write a signed stop setpoint to 1028 if we were actually charging.
+        # Only write a signed stop setpoint if we were actually charging.
         # In predbat hold mode (_predbat_was_charging is False), that stop
         # setpoint was already written when Predbat switched from charge to hold.
         # In normal mode (predbat switch OFF), we always write it here.
         if not self._is_predbat_active() or self._predbat_was_charging is True:
             # Always use live power balance on manual stop — the 0.0 hold-transition
             # setpoint only makes sense when charge completes naturally in _predbat_loop_action.
-            signed_stop_pct = self._stop_signed_pct_from_active_power()
-            await self._data.handler.write_float(self._data.charge_discharge_reg, signed_stop_pct)
+            await self._write_power_setpoint(self._stop_setpoint_watts_from_active_power())
         self._data.last_stop_time = time.time()
         self._set_predbat_status("Inactive")
         if self._predbat_discharge_blocked:
@@ -1005,14 +992,13 @@ class KostalDischargeStartSwitch(KostalBaseSwitch):
     async def _loop_action(self, *args):
         if not self._attr_is_on:
             return
-        await self._data.handler.write_float(self._data.charge_discharge_reg, abs(self._data.discharge_rate))
+        await self._write_power_setpoint(abs(self._data.discharge_power_w()))
 
     async def _stop_action(self):
         self._data.last_stop_time = time.time()
         # Recalculate the signed stop setpoint so the inverter can settle into
         # either discharge, neutral, or charge depending on live net power.
-        signed_stop_pct = self._stop_signed_pct_from_active_power()
-        await self._data.handler.write_float(self._data.charge_discharge_reg, signed_stop_pct)
+        await self._write_power_setpoint(self._stop_setpoint_watts_from_active_power())
         await self._data.handler.close()
 
 
@@ -1130,54 +1116,61 @@ class KostalEMSSwitch(KostalBaseSwitch, RestoreEntity):
 
         fuse_size = self._data.fuse_size
         safe_limit_amps = fuse_size * EMS_SAFETY_MARGIN
+        voltages = [
+            self._phase_voltage(data.get(address))
+            for address in (REG_VOLTAGE_PHASE1, REG_VOLTAGE_PHASE2, REG_VOLTAGE_PHASE3)
+        ]
 
+        # Battery charging is spread evenly over the three phases, so each
+        # phase allows its own current headroom times three at its voltage
         headroom_watts = min(
-            (safe_limit_amps - max(0.0, phase1)) * 3 * EMS_PHASE_VOLTAGE,
-            (safe_limit_amps - max(0.0, phase2)) * 3 * EMS_PHASE_VOLTAGE,
-            (safe_limit_amps - max(0.0, phase3)) * 3 * EMS_PHASE_VOLTAGE,
+            (safe_limit_amps - max(0.0, phase1)) * 3 * voltages[0],
+            (safe_limit_amps - max(0.0, phase2)) * 3 * voltages[1],
+            (safe_limit_amps - max(0.0, phase3)) * 3 * voltages[2],
         )
 
-        # Convert headroom watts → % using max of 1076/1078 as battery max power
-        battery_voltage = data.get(REG_BATTERY_VOLTAGE) or 400.0
-        max_charge_w = data.get(REG_BATTERY_MAX_CHARGE_LIMIT) or 0.0
-        max_discharge_w = data.get(REG_BATTERY_MAX_DISCHARGE_LIMIT) or 0.0
-        max_watts = max(max_charge_w, max_discharge_w)
-        if max_watts <= 0.0:
-            _LOGGER.warning("EMS: Battery max power unavailable (1076=%.0f, 1078=%.0f) — skipping cycle", max_charge_w, max_discharge_w)
-            return
-
-        prev_limit = self._ems_smoothed_limit if self._ems_smoothed_limit is not None else self._data.charge_rate
-        raw_pct = max(0.0, min(prev_limit + (headroom_watts / max_watts * 100.0), self._data.charge_rate))
+        charge_rate_watts = abs(self._data.charge_power_w())
+        prev_limit = self._ems_smoothed_limit if self._ems_smoothed_limit is not None else charge_rate_watts
+        raw_watts = max(0.0, min(prev_limit + headroom_watts, charge_rate_watts))
 
         EMA_ALPHA = 0.3
         if self._ems_smoothed_limit is None:
-            self._ems_smoothed_limit = raw_pct
+            self._ems_smoothed_limit = raw_watts
         else:
-            self._ems_smoothed_limit = EMA_ALPHA * raw_pct + (1 - EMA_ALPHA) * self._ems_smoothed_limit
+            self._ems_smoothed_limit = EMA_ALPHA * raw_watts + (1 - EMA_ALPHA) * self._ems_smoothed_limit
 
-        target_pct = round(self._ems_smoothed_limit, 1)
+        target_watts = float(round(self._ems_smoothed_limit))
 
-        if target_pct == 0.0:
+        if target_watts <= 0.0:
             new_status = "Blocked"
-        elif target_pct < self._data.charge_rate:
+        elif target_watts < charge_rate_watts - POWER_RATE_STEP_W:
+            # A margin keeps small moves of a rate that follows the battery
+            # voltage from reading as protection
             new_status = "Protecting"
         else:
             new_status = "Ok"
 
         _LOGGER.debug(
-            "EMS: phase=%.1f/%.1f/%.1f A, fuse=%sA, headroom=%.0f W, max_batt=%.0fW → raw=%.1f%% smooth=%s%% (%s)",
-            phase1, phase2, phase3, fuse_size,
-            headroom_watts, max_watts,
-            raw_pct, target_pct, new_status,
+            "EMS: phase=%.1f/%.1f/%.1f A at %.0f/%.0f/%.0f V, fuse=%sA, headroom=%.0f W, charge_rate=%.0f W → raw=%.0f W smooth=%.0f W (%s)",
+            phase1, phase2, phase3, *voltages, fuse_size,
+            headroom_watts, charge_rate_watts,
+            raw_watts, target_watts, new_status,
         )
 
-        self._data.ems_charge_limit_pct = target_pct
+        self._data.ems_charge_limit_w = target_watts
         self._set_ems_status(new_status)
-        # EMS does NOT write to Modbus — Charge Start is the sole writer to 1028/1030
+        # EMS does NOT write to Modbus — Charge Start is the sole writer to the power setpoint
+
+    @staticmethod
+    def _phase_voltage(voltage: float | None) -> float:
+        """Measured phase voltage, or the nominal voltage when the meter reports none."""
+        if voltage is None or voltage < 100.0:
+            return EMS_PHASE_VOLTAGE
+        return voltage
 
     async def _stop_action(self) -> None:
         self._ems_smoothed_limit = None
-        self._data.ems_charge_limit_pct = 100.0
+        self._data.ems_charge_limit_w = None
         self._set_ems_status("Inactive")
         # EMS does NOT write to Modbus — nothing is written unless a charge switch is active
 

@@ -28,15 +28,34 @@ REST_VERSION_TIMEOUT_SECONDS = 10
 REST_VERSION_RETRY_SECONDS = 600  # After a failed fetch, e.g. web server still starting
 REG_INVERTER_STATE = 56       # Inverter state - U32 (0x38)
 # External battery management (Kostal Modbus doc section 3.4). Setpoints are
-# signed: negative = charge, positive = discharge. Relative setpoints are in
-# % of the inverter's nominal value (Inom or Pnom).
-REG_BATTERY_DC_CURRENT_SETPOINT_REL = 1028  # Battery charge current (DC) setpoint, relative (%) - Float (0x404) RW. Used for hybrid inverters
-REG_BATTERY_AC_POWER_SETPOINT_REL = 1030    # Battery charge power (AC) setpoint, relative (%) - Float (0x406) RW. PLENTICORE BI and (MP) G3 only; used for BI
-REG_BATTERY_DC_POWER_SETPOINT_W = 1034      # Battery charge power (DC) setpoint, absolute (W) - Float (0x40A) RW. Currently unused
+# signed: negative = charge, positive = discharge. The integration controls the
+# battery with the absolute setpoints in Watts; the inverter holds a setpoint
+# for about 30 s after the last write, then falls back to its own control.
+REG_BATTERY_AC_POWER_SETPOINT_W = 1026      # Battery charge power (AC) setpoint, absolute (W) - Float (0x402) RW. PLENTICORE BI and (MP) G3 only; used for BI
+REG_BATTERY_DC_POWER_SETPOINT_W = 1034      # Battery charge power (DC) setpoint, absolute (W) - Float (0x40A) RW. Used for hybrid inverters
 REG_BATTERY_MAX_CHARGE_POWER_W = 1038       # Battery max. charge power limit, absolute (W) - Float (0x40E) RW. Written 0 to block charging
 REG_BATTERY_MAX_DISCHARGE_POWER_W = 1040    # Battery max. discharge power limit, absolute (W) - Float (0x410) RW. Written 0 to block discharging
 REG_BATTERY_MIN_SOC = 1042        # Minimum SOC % - Float (0x412) RW
 REG_BATTERY_MAX_SOC = 1044        # Maximum SOC % - Float (0x414) RW
+
+# Maximum battery control power. Hybrid inverters: battery voltage times the
+# nominal battery current (Inom). Inom is measured as 1078 / battery voltage
+# (on a G3, 1078 is exactly 30 A times the actual voltage), keeping the highest
+# value seen so a BMS derating does not lower it, and capped by the documented
+# Inom of the inverter generation — the first number of the software version:
+# 01.30.12092 = G1, 02.15.xxxxx = G2, 3.07.00.xxxxx = G3 (and MP G3).
+BATTERY_NOMINAL_CURRENT_BY_GENERATION = {
+    1: 13.0,  # PLENTICORE plus G1
+    2: 13.0,  # PLENTICORE plus G2
+    3: 30.0,  # PLENTICORE G3 / MP G3
+}
+# PLENTICORE BI: the AC setpoint is limited by the nominal AC power, i.e. the
+# power class (register 800) of the BI 5.5/26 or BI 10/26 — the 26 A battery
+# current is not reachable within it.
+BI_NOMINAL_POWER_BY_POWER_CLASS = {
+    5.5: 5500.0,    # PLENTICORE BI 5.5/26
+    10.0: 10000.0,  # PLENTICORE BI 10/26
+}
 
 # I/O Board Output Registers
 REG_IO_OUTPUT_1 = 608             # I/O-Board Switched Output 1 - U16 (0x260) RW
@@ -164,11 +183,12 @@ SENSOR_CURRENT_PHASE2 = "current_phase2"
 SENSOR_CURRENT_PHASE3 = "current_phase3"
 SENSOR_SENSOR_TYPE = "sensor_type"
 SENSOR_EMS_STATUS = "ems_status"
-SENSOR_EMS_CHARGE_LIMIT = "ems_charge_limit"
+SENSOR_EMS_CHARGE_LIMIT_POWER = "ems_charge_limit_power"
 SENSOR_PREDBAT_STATUS = "predbat_status"
 SENSOR_PREDBAT_MODE = "predbat_mode"
-SENSOR_BATTERY_CHARGE_CURRENT_SETPOINT = "battery_charge_current_setpoint"
-SENSOR_BATTERY_CHARGE_POWER_SETPOINT = "battery_charge_power_setpoint"
+SENSOR_BATTERY_DC_POWER_SETPOINT = "battery_dc_power_setpoint"
+SENSOR_BATTERY_AC_POWER_SETPOINT = "battery_ac_power_setpoint"
+SENSOR_BATTERY_MAX_CONTROL_POWER = "battery_max_control_power"
 SENSOR_BATTERY_MAX_CHARGE_POWER_LIMIT = "battery_max_charge_power_limit"
 SENSOR_BATTERY_MAX_DISCHARGE_POWER_LIMIT = "battery_max_discharge_power_limit"
 SENSOR_BATTERY_WORK_CAPACITY = "battery_work_capacity"
@@ -237,19 +257,20 @@ PREDBAT_HOLD_DELTA = 1.0
 # Grid connection point export threshold (Watts) that must be sustained for
 # PREDBAT_LOW_POWER_SUSPEND_DELAY_SECONDS before the low-power charge loop
 # stops writing the charge setpoint, letting the inverter's own timeout on
-# register 1028/1030 expire and fall back to internal 0-export self-consumption
+# the power setpoint expire and fall back to internal 0-export self-consumption
 # control (which reacts faster than this integration's own loop).
 PREDBAT_LOW_POWER_EXPORT_THRESHOLD_WATTS = 100.0
 PREDBAT_LOW_POWER_SUSPEND_DELAY_SECONDS = 30.0
 
 # Tolerance fraction subtracted from the low-power setpoint before comparing
-# against measured battery charging power to decide whether to resume writes.
-# Measured battery power runs a few percent below the commanded AC-side
-# setpoint even when the inverter is fully meeting it (charge conversion /
-# round-trip loss), so the comparison must be relative to the setpoint size,
-# not a fixed Watt margin, or it would always look "below target" and resume
-# immediately after every suspend.
-PREDBAT_LOW_POWER_RESUME_TOLERANCE_FRACTION = 0.15
+# against measured battery charging power (register 582, DC) to decide whether
+# to resume writes. The comparison is relative to the setpoint size, not a
+# fixed Watt margin, or it would look "below target" and resume immediately
+# after every suspend. On a hybrid inverter the DC setpoint 1034 is met within
+# a few Watts; the BI's AC setpoint 1026 includes conversion loss, so it needs
+# a wider margin.
+PREDBAT_LOW_POWER_RESUME_TOLERANCE_FRACTION = 0.05
+PREDBAT_LOW_POWER_RESUME_TOLERANCE_FRACTION_BI = 0.15
 
 # Entity descriptions (Switches)
 SWITCH_CHARGE_START = "charge_start"
@@ -271,9 +292,12 @@ NUMBER_MIN_SOC_LIMIT = "min_soc_limit"
 NUMBER_MAX_SOC_LIMIT = "max_soc_limit"
 
 # Defaults
-DEFAULT_MAX_PERCENT = 100.0
-DEFAULT_CHARGE_RATE = 100.0
-DEFAULT_DISCHARGE_RATE = 100.0
+# Charge/discharge rates in Watts. A rate follows the maximum battery control
+# power until the user sets a lower value. The fallback is only used while the
+# maximum is still unknown (e.g. before the first poll); the inverter clamps an
+# out-of-range setpoint itself.
+POWER_RATE_STEP_W = 100.0
+POWER_RATE_FALLBACK_MAX_W = 20000.0
 DEFAULT_FUSE_SIZE = 25.0  # Amps — old Kostal default; user should set to actual value
 
 # SOC limits. The bottom of the min range and the top of the max range are the
@@ -288,4 +312,4 @@ DEFAULT_MAX_SOC_LIMIT = MAX_SOC_LIMIT_RANGE[1]
 
 # EMS settings
 EMS_SAFETY_MARGIN = 0.90   # Trigger at 90% of fuse size
-EMS_PHASE_VOLTAGE = 230.0  # Assumed phase voltage (V)
+EMS_PHASE_VOLTAGE = 230.0  # Fallback phase voltage (V) when the smart meter reports none

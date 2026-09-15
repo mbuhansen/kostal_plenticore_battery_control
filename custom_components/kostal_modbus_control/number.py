@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import logging
+import math
 from datetime import timedelta
 from typing import Any
 
-from homeassistant.components.number import NumberEntity, NumberMode, RestoreNumber
+from homeassistant.components.number import NumberDeviceClass, NumberMode, RestoreNumber
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import PERCENTAGE, EntityCategory
+from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfPower
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -19,8 +20,8 @@ from .const import (
     NUMBER_FUSE_SIZE,
     NUMBER_MIN_SOC_LIMIT,
     NUMBER_MAX_SOC_LIMIT,
-    DEFAULT_CHARGE_RATE,
-    DEFAULT_DISCHARGE_RATE,
+    POWER_RATE_FALLBACK_MAX_W,
+    POWER_RATE_STEP_W,
     DEFAULT_FUSE_SIZE,
     DEFAULT_MIN_SOC_LIMIT,
     DEFAULT_MAX_SOC_LIMIT,
@@ -41,8 +42,8 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][entry.entry_id]
 
     entities = [
-        KostalNumber(data, entry.entry_id, NUMBER_CHARGE_RATE, "Set Charge Rate", "%", DEFAULT_CHARGE_RATE),
-        KostalNumber(data, entry.entry_id, NUMBER_DISCHARGE_RATE, "Set Discharge Rate", "%", DEFAULT_DISCHARGE_RATE),
+        KostalPowerRateNumber(data, entry.entry_id, NUMBER_CHARGE_RATE, "Set Charge Rate", "charge_power_fixed_w"),
+        KostalPowerRateNumber(data, entry.entry_id, NUMBER_DISCHARGE_RATE, "Set Discharge Rate", "discharge_power_fixed_w"),
         KostalFuseSizeNumber(data, entry.entry_id),
         KostalMinSocLimitNumber(data, entry.entry_id),
         KostalMaxSocLimitNumber(data, entry.entry_id),
@@ -50,50 +51,114 @@ async def async_setup_entry(
 
     async_add_entities(entities)
 
-class KostalNumber(RestoreNumber):
-    """Representation of a Kostal Modbus Number."""
+
+class KostalPowerRateNumber(RestoreNumber):
+    """Charge or discharge rate in Watts.
+
+    A rate follows the maximum battery control power until the user sets a
+    lower value, which is then kept, also across restarts. Setting it back to
+    the maximum or above makes it follow the maximum again. Which of the two
+    applies is restored from the ``follows_max`` state attribute.
+    """
 
     _attr_has_entity_name = True
+    _attr_should_poll = False
     _attr_native_min_value = 0.0
-    _attr_native_max_value = 100.0
-    _attr_native_step = 1.0
+    _attr_native_step = POWER_RATE_STEP_W
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_device_class = NumberDeviceClass.POWER
     _attr_mode = NumberMode.BOX
 
-    def __init__(self, data, entry_id, key, name, unit, default):
+    def __init__(self, data, entry_id: str, key: str, name: str, data_attr: str) -> None:
         self._data = data
         self._entry_id = entry_id
         self._key = key
-        self._default = default
+        self._data_attr = data_attr
         self._attr_unique_id = f"{entry_id}_{key}"
         self._attr_name = name
-        self._attr_native_value = default
-        self._attr_native_unit_of_measurement = unit
-        self._update_data_store(default)
-
-    async def async_added_to_hass(self) -> None:
-        """Restore last user-set value on HA restart."""
-        await super().async_added_to_hass()
-        if (state := await self.async_get_last_number_data()) is not None and state.native_value is not None:
-            self._attr_native_value = state.native_value
-            self._update_data_store(state.native_value)
-        self.async_write_ha_state()
+        self._last_written: tuple[float | None, float] | None = None
+        self._set_fixed(None)
 
     @property
     def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._entry_id)},
-        )
+        return DeviceInfo(identifiers={(DOMAIN, self._entry_id)})
 
-    def _update_data_store(self, value):
-        if self._key == NUMBER_CHARGE_RATE:
-            self._data.charge_rate = value
-        elif self._key == NUMBER_DISCHARGE_RATE:
-            self._data.discharge_rate = value
+    def _fixed(self) -> float | None:
+        return getattr(self._data, self._data_attr)
+
+    def _set_fixed(self, value: float | None) -> None:
+        setattr(self._data, self._data_attr, value)
+
+    @property
+    def native_value(self) -> float | None:
+        fixed = self._fixed()
+        if fixed is not None:
+            return fixed
+        max_power = self._data.max_battery_power_w()
+        if max_power is None:
+            return None
+        return math.floor(max_power / POWER_RATE_STEP_W) * POWER_RATE_STEP_W
+
+    @property
+    def native_max_value(self) -> float:
+        max_power = self._data.max_battery_power_w()
+        if max_power is None:
+            return POWER_RATE_FALLBACK_MAX_W
+        return math.ceil(max_power / POWER_RATE_STEP_W) * POWER_RATE_STEP_W
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {"follows_max": self._fixed() is None}
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the user's fixed value, or keep following the maximum."""
+        await super().async_added_to_hass()
+        last_number = await self.async_get_last_number_data()
+        last_state = await self.async_get_last_state()
+        if last_number is None or last_number.native_value is None:
+            self._set_fixed(None)
+        elif last_number.native_unit_of_measurement == PERCENTAGE:
+            # Older versions stored the rate in % of the inverter's nominal
+            # value, which cannot be converted reliably — start at the maximum
+            self._set_fixed(None)
+            _LOGGER.info(
+                "%s was %.0f%% in an earlier version — it now follows the maximum battery power in W",
+                self.name,
+                last_number.native_value,
+            )
+        elif last_state is not None and last_state.attributes.get("follows_max") is True:
+            self._set_fixed(None)
+        else:
+            self._set_fixed(float(last_number.native_value))
+
+        coordinator = self._data.coordinator
+        if coordinator is not None:
+            self.async_on_remove(coordinator.async_add_listener(self._handle_coordinator_update))
+        self._write_state()
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        # The displayed value and maximum track the battery voltage
+        if (self.native_value, self.native_max_value) != self._last_written:
+            self._write_state()
+
+    @callback
+    def _write_state(self) -> None:
+        self._last_written = (self.native_value, self.native_max_value)
+        self.async_write_ha_state()
 
     async def async_set_native_value(self, value: float) -> None:
-        self._attr_native_value = value
-        self._update_data_store(value)
-        self.async_write_ha_state()
+        max_power = self._data.max_battery_power_w()
+        follow_from = (
+            POWER_RATE_FALLBACK_MAX_W
+            if max_power is None
+            else math.floor(max_power / POWER_RATE_STEP_W) * POWER_RATE_STEP_W
+        )
+        if value >= follow_from:
+            self._set_fixed(None)
+        else:
+            self._set_fixed(float(value))
+        self._write_state()
 
 
 class KostalFuseSizeNumber(RestoreNumber):

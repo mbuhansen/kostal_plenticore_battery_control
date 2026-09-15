@@ -7,7 +7,7 @@ This custom integration allows for advanced Battery control of Kostal Plenticore
 *   **External Battery Control:** Force charge or discharge your battery via Modbus.
 *   **Predbat Integration:** When [Predbat](https://springfall2008.github.io/batpred/) is installed and in an active control mode, `Charge Start` follows `predbat.best_charge_limit` and switches between charging, holding the SoC, and releasing the inverter automatically.
 *   **Battery SOC Limits:** Minimum and maximum SOC entities that hold the limit at the inverter for as long as it is set — cap the battery at 50% while you are away, or stop charging in the morning and raise the limit again later in the day.
-*   **Safety Limits:** Automatically reads the battery's current maximum Charge/Discharge limits (Registers 1076/1078) and clamps user values to ensure safety.
+*   **Control in Watts:** Charge and discharge power is sent to the inverter as an absolute setpoint in Watts, clamped to the maximum battery control power, which is derived from the battery voltage and the inverter's nominal battery current.
 *   **Mutually Exclusive Switches:** Smart logic ensures you cannot accidentally enable conflicting modes simultaneously.
 *   **Automatic Resume:** If Modbus communication drops while a control switch is on, the switch pauses instead of turning off and resumes by itself once the inverter is reachable again.
 *   **EMS Grid Protection:** Dynamic charge control that monitors all three grid phase currents and automatically reduces charge power to prevent fuses from tripping.
@@ -57,8 +57,8 @@ In the first two modes the inverter **silently ignores** every write — the swi
     *   **Host:** IP address of the inverter.
     *   **Modbus Timeout:** Must match the timeout set in the Inverter Web UI — this keeps the Modbus session alive.
     *   **Inverter Type:**
-        *   **Plenticore Hybrid** — charge/discharge power is controlled through register `1028`.
-        *   **Plenticore BI / Battery Inverter** — charge/discharge power is controlled through register `1030`.
+        *   **Plenticore Hybrid** — charge/discharge power is controlled through register `1034` (battery DC power setpoint in W).
+        *   **Plenticore BI / Battery Inverter** — charge/discharge power is controlled through register `1026` (battery AC power setpoint in W). Not yet tested on a BI.
 5.  If battery management is not set to Modbus, a warning screen appears explaining what to change in the Inverter Web UI. Setup continues when you submit it.
 6.  If the inverter reports a **KOSTAL Smart Energy Meter** as its connected meter (sensor type `0x03`), a second step offers to add the KSEM's IP address. This is optional — leave it empty to skip. With it configured, the integration opens a second Modbus connection to the KSEM (port `502`, unit ID `1`) and adds the energy and power-flow sensors listed below.
 
@@ -68,8 +68,8 @@ There are no options to configure after setup; everything else is controlled thr
 
 ### Switches (Controls)
 
-*   **Charge Start:** Forces the battery to charge at the rate defined in "Set Charge Rate". Automatically respects the battery's physical charge limit. If Predbat is active this switch runs the Predbat control logic instead — see below.
-*   **Discharge Start:** Forces the battery to discharge at the rate defined in "Set Discharge Rate". Automatically respects the battery's physical discharge limit.
+*   **Charge Start:** Forces the battery to charge at the power defined in "Set Charge Rate", clamped to the maximum battery control power. If Predbat is active this switch runs the Predbat control logic instead — see below.
+*   **Discharge Start:** Forces the battery to discharge at the power defined in "Set Discharge Rate", clamped to the maximum battery control power.
 *   **Block Charge:** Prevents the battery from charging (sets charge rate to 0). Restores the configured rate when turned off.
 *   **Block Discharge:** Prevents the battery from discharging (sets discharge rate to 0). Restores the configured rate when turned off.
 
@@ -105,7 +105,7 @@ The 1-point start band and the 1-point hold band (`PREDBAT_CHARGE_START_DELTA` a
 Two Predbat features are followed automatically:
 
 *   **Hold for car** — when `predbat.status` contains `Hold for car` without an active charge window, the decision is forced to hold so the battery does not discharge into the car charger.
-*   **Low power charging** — when `switch.predbat_set_charge_low_power` is on, the charge rate is capped to `input_number.predbat_charge_rate` converted to a percentage of the battery's maximum charge power. If the house then exports at least 100W to the grid for 30 seconds straight, the charge setpoint writes are suspended entirely, letting the inverter's own faster zero-export regulation take over. Writes resume as soon as the measured battery charging power falls more than 15% below the low-power setpoint, for example when PV production fades.
+*   **Low power charging** — when `switch.predbat_set_charge_low_power` is on, the charge power is capped to `input_number.predbat_charge_rate`, which is used directly in Watts. If the house then exports at least 100W to the grid for 30 seconds straight, the charge setpoint writes are suspended entirely, letting the inverter's own faster zero-export regulation take over. Writes resume as soon as the measured battery charging power falls more than 5% below the low-power setpoint (15% on a BI, whose AC setpoint includes conversion loss), for example when PV production fades.
 
 ### EMS Grid Protection
 
@@ -113,8 +113,8 @@ The EMS (Energy Management System) switch protects your house fuses during force
 
 **How it works:**
 - Every poll cycle it reads the current on all three grid phases from the smart meter.
-- It calculates the available headroom per phase: `(fuse_size × 90%) - |phase_current|` converted to Watts at 230V.
-- Charge power is set to the most constrained phase's headroom, capped by your configured "Set Charge Rate".
+- It calculates the available headroom per phase: `(fuse_size × 90%) - |phase_current|` converted to Watts at that phase's measured voltage (230V when the meter reports none).
+- Charge power is set to the most constrained phase's headroom, capped by your configured "Set Charge Rate". The limit is shown in Watts by the `EMS Charge Limit` sensor.
 - If any phase is already at 90% of fuse capacity, charging is reduced accordingly. If headroom is zero or negative, charging stops (0W).
 - The computed limit is smoothed with an exponential moving average so it does not jump on a single noisy reading.
 
@@ -132,8 +132,9 @@ The EMS (Energy Management System) switch protects your house fuses during force
 
 ### Numbers (Settings)
 
-*   **Set Charge Rate:** Target power (W) for forced charging. Automatically clamped to the battery's physical limit.
-*   **Set Discharge Rate:** Target power (W) for forced discharging. Automatically clamped to the battery's physical limit.
+*   **Set Charge Rate / Set Discharge Rate:** Target power in Watts for forced charging and discharging. A rate starts out following the maximum battery control power (the `Battery Max Control Power` sensor), so it shows e.g. about 11000 W on a PLENTICORE G3 and moves with the battery voltage. Set a lower value and that value is kept, also across restarts; set it to the maximum or above and it follows the maximum again. The `follows_max` attribute shows which applies. A fixed value above the current maximum is clamped when written.
+
+    > Earlier versions stored these rates in % of the inverter's nominal value. That cannot be converted reliably, so after upgrading both rates start out following the maximum — set them again if you used a lower value.
 *   **House Fuse Size** *(Configuration category)*: The size of your house fuses in Ampere (A). Used by EMS Grid Protection to calculate safe charge headroom.
 *   **Battery Minimum SOC Limit:** 5–100%. `5` means not in use — that is the inverter's own minimum.
 *   **Battery Maximum SOC Limit:** 5–100%. `100` means not in use — that is the inverter's own maximum.
@@ -188,7 +189,8 @@ want to watch this happen. Each limit entity also exposes `active` and `writing`
 | Battery Type | — | Detected battery manufacturer/type |
 | Battery Model ID Text | — | Decoded battery model name |
 | EMS Grid Protection Status | — | Current state of the EMS Grid Protection function |
-| EMS Charge Limit | % | Charge limit currently computed by EMS Grid Protection |
+| EMS Charge Limit | W | Charge limit currently computed by EMS Grid Protection |
+| Battery Max Control Power | W | Maximum power the integration clamps charge/discharge setpoints to — see Maximum Battery Control Power. Attributes show the observed and documented nominal battery current |
 | Predbat Status | — | What Predbat control is currently doing |
 | Predbat Mode | — | Whether Predbat is installed and in an active control mode |
 
@@ -210,8 +212,8 @@ Enable these on the device page when you need them:
 | Battery BMS Serial Number | — | Battery BMS serial |
 | Battery Model ID | — | Raw battery model ID |
 | Battery Minimum SOC / Battery Maximum SOC | % | Read-back of registers 1042 / 1044 |
-| Battery Charge Current / Power Setpoint | A / W | Current setpoint, depending on inverter type |
-| Battery Max Charge / Discharge Power Setpoint | W | Configured maximum setpoints |
+| Battery DC / AC Power Setpoint | W | Read-back of the power setpoint register 1034 (hybrid) / 1026 (BI). It keeps the last written value after the inverter has fallen back to its own control |
+| Battery Max Charge / Discharge Power Limit | W | Read-back of the limit registers 1038 / 1040 |
 
 ### KSEM Sensors (when KSEM is configured)
 
@@ -303,7 +305,18 @@ so a single missing diagnostic register made *all* entities unavailable
 
 ## Technical Details
 
-*   **Control Register:** `1028` (Hybrid) / `1030` (BI) — signed relative setpoint (negative = charge, positive = discharge). `1028` is the battery charge current (DC) setpoint for hybrid inverters, where the battery is DC-coupled; `1030` is the battery charge power (AC) setpoint for the AC-coupled PLENTICORE BI. Both are percentages of the inverter's nominal value (Inom / Pnom). Selected by the inverter type chosen during setup.
+*   **Control Register:** `1034` (Hybrid) / `1026` (BI) — signed absolute power setpoint in Watts (negative = charge, positive = discharge). `1034` is the battery charge power (DC) setpoint for hybrid inverters, where the battery is DC-coupled; `1026` is the battery charge power (AC) setpoint for the AC-coupled PLENTICORE BI. Selected by the inverter type chosen during setup. Tested on a PLENTICORE G3 (SW 3.07): `1034` alone is enough, the setpoint is reached within a few seconds to within a few Watts, and the inverter itself clamps it to its nominal battery current. About 30 seconds after the last write the inverter falls back to its own control, and reading the register back still shows the last value, so it cannot tell whether external control is active. Earlier versions used the relative setpoints `1028` / `1030`.
+*   **Maximum Battery Control Power:** Setpoints and rates that follow the maximum are clamped to it.
+    *   **Hybrid:** `battery voltage (216) × nominal battery current`. The nominal battery current is measured as `1078 / battery voltage` — on a G3, `1078` is exactly 30 A times the actual battery voltage — and the highest value seen since Home Assistant started is kept, so a temporary BMS derating does not lower it. It is capped by the documented current of the inverter generation, taken from the first number of the software version:
+
+        | Inverter | Software version | Nominal battery current |
+        |---|---|---|
+        | PLENTICORE plus G1 | `01.xx` | 13 A |
+        | PLENTICORE plus G2 | `02.xx` | 13 A |
+        | PLENTICORE G3 / MP G3 | `3.xx` / `03.xx` | 30 A |
+
+    *   **BI:** the nominal AC power from the power class (register `800`): 5500 W for the BI 5.5/26 and 10000 W for the BI 10/26, or `1078` when the power class is unknown.
+    *   Register `1076` is not used for this: on a G3 it is 30 A times the battery's *maximum* voltage, not its actual voltage.
 *   **Limit Registers:** `1076` / `1078` — Maximum charge/discharge power limits read out from the battery.
 *   **Block Registers:** `1038` / `1040` — Battery max. charge/discharge power limits. Only used for blocking: written to 0 to block, and restored to the battery's own maximum (`1076` / `1078`) afterwards.
 *   **SOC Limit Registers:** `1042` / `1044` — Minimum/maximum SOC. Only in effect while actively written.

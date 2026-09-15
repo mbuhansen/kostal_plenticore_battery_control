@@ -42,8 +42,8 @@ from .const import (
     REG_BATTERY_TEMP,
     REG_BATTERY_MAX_CHARGE_LIMIT,
     REG_BATTERY_MAX_DISCHARGE_LIMIT,
-    REG_BATTERY_DC_CURRENT_SETPOINT_REL,
-    REG_BATTERY_AC_POWER_SETPOINT_REL,
+    REG_BATTERY_DC_POWER_SETPOINT_W,
+    REG_BATTERY_AC_POWER_SETPOINT_W,
     REG_BATTERY_MAX_CHARGE_POWER_W,
     REG_BATTERY_MAX_DISCHARGE_POWER_W,
     REG_BATTERY_WORK_CAPACITY,
@@ -79,10 +79,11 @@ from .const import (
     SENSOR_CURRENT_PHASE3,
     SENSOR_SENSOR_TYPE,
     SENSOR_EMS_STATUS,
-    SENSOR_EMS_CHARGE_LIMIT,
+    SENSOR_EMS_CHARGE_LIMIT_POWER,
     SENSOR_PREDBAT_STATUS,
-    SENSOR_BATTERY_CHARGE_CURRENT_SETPOINT,
-    SENSOR_BATTERY_CHARGE_POWER_SETPOINT,
+    SENSOR_BATTERY_DC_POWER_SETPOINT,
+    SENSOR_BATTERY_AC_POWER_SETPOINT,
+    SENSOR_BATTERY_MAX_CONTROL_POWER,
     SENSOR_BATTERY_MAX_CHARGE_POWER_LIMIT,
     SENSOR_BATTERY_MAX_DISCHARGE_POWER_LIMIT,
     SENSOR_BATTERY_WORK_CAPACITY,
@@ -156,6 +157,7 @@ async def async_setup_entry(
         KostalBatteryTempSensor(coordinator, entry.entry_id),
         KostalBatteryMaxChargeLimitSensor(coordinator, entry.entry_id),
         KostalBatteryMaxDischargeLimitSensor(coordinator, entry.entry_id),
+        KostalBatteryMaxControlPowerSensor(coordinator, data, entry.entry_id),
         KostalVoltagePhase1Sensor(coordinator, entry.entry_id),
         KostalVoltagePhase2Sensor(coordinator, entry.entry_id),
         KostalVoltagePhase3Sensor(coordinator, entry.entry_id),
@@ -205,9 +207,9 @@ async def async_setup_entry(
         entities.append(KostalKsemHomeConsumptionFromGridSensor(coordinator, entry.entry_id))
 
     if inverter_type == INVERTER_TYPE_BI:
-        entities.append(KostalBatteryChargePowerSetpointSensor(coordinator, entry.entry_id))
+        entities.append(KostalBatteryAcPowerSetpointSensor(coordinator, entry.entry_id))
     else:
-        entities.append(KostalBatteryChargeCurrentSetpointSensor(coordinator, entry.entry_id))
+        entities.append(KostalBatteryDcPowerSetpointSensor(coordinator, entry.entry_id))
 
     async_add_entities(entities)
 
@@ -265,26 +267,59 @@ class KostalTotalActivePowerSensor(KostalBaseSensor):
     _attr_state_class = SensorStateClass.MEASUREMENT
 
 
-class KostalBatteryChargeCurrentSetpointSensor(KostalBaseSensor):
-    _key = SENSOR_BATTERY_CHARGE_CURRENT_SETPOINT
-    _name = "Battery Charge Current Setpoint"
-    _address = REG_BATTERY_DC_CURRENT_SETPOINT_REL
-    _attr_device_class = None
-    _attr_native_unit_of_measurement = PERCENTAGE
+class KostalBatteryDcPowerSetpointSensor(KostalBaseSensor):
+    """Read-back of register 1034. Keeps the last value after the inverter's timeout."""
+
+    _key = SENSOR_BATTERY_DC_POWER_SETPOINT
+    _name = "Battery DC Power Setpoint"
+    _address = REG_BATTERY_DC_POWER_SETPOINT_W
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_entity_registry_enabled_default = False
 
 
-class KostalBatteryChargePowerSetpointSensor(KostalBaseSensor):
-    _key = SENSOR_BATTERY_CHARGE_POWER_SETPOINT
-    _name = "Battery Charge Power Setpoint"
-    _address = REG_BATTERY_AC_POWER_SETPOINT_REL
-    _attr_device_class = None
-    _attr_native_unit_of_measurement = PERCENTAGE
+class KostalBatteryAcPowerSetpointSensor(KostalBaseSensor):
+    """Read-back of register 1026. Keeps the last value after the inverter's timeout."""
+
+    _key = SENSOR_BATTERY_AC_POWER_SETPOINT
+    _name = "Battery AC Power Setpoint"
+    _address = REG_BATTERY_AC_POWER_SETPOINT_W
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_entity_registry_enabled_default = False
+
+
+class KostalBatteryMaxControlPowerSensor(KostalBaseSensor):
+    """Maximum battery control power the integration clamps setpoints to."""
+
+    _key = SENSOR_BATTERY_MAX_CONTROL_POWER
+    _name = "Battery Max Control Power"
+    _address = REG_BATTERY_MAX_DISCHARGE_LIMIT  # Not read directly — native_value is computed
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: KostalCoordinator, data, entry_id: str) -> None:
+        super().__init__(coordinator, entry_id)
+        self._data = data
+
+    @property
+    def native_value(self):
+        max_power = self._data.max_battery_power_w()
+        return round(max_power) if max_power is not None else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        observed = self._data.battery_nominal_current_observed
+        return {
+            "nominal_current_observed": round(observed, 2) if observed is not None else None,
+            "nominal_current_documented": self._data.documented_battery_nominal_current(),
+        }
 
 
 class KostalBatteryMaxChargePowerLimitSensor(KostalBaseSensor):
@@ -480,16 +515,16 @@ class KostalEMSChargeLimitSensor(SensorEntity):
 
     _attr_has_entity_name = True
     _attr_should_poll = False
-    _attr_device_class = SensorDeviceClass.POWER_FACTOR
+    _attr_device_class = SensorDeviceClass.POWER
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_native_unit_of_measurement = PERCENTAGE
-    _attr_suggested_display_precision = 1
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_suggested_display_precision = 0
     _attr_icon = "mdi:lightning-bolt"
 
     def __init__(self, data, entry_id: str) -> None:
         self._data = data
         self._entry_id = entry_id
-        self._attr_unique_id = f"{entry_id}_{SENSOR_EMS_CHARGE_LIMIT}"
+        self._attr_unique_id = f"{entry_id}_{SENSOR_EMS_CHARGE_LIMIT_POWER}"
         self._attr_name = "EMS Charge Limit"
 
     @property
@@ -498,9 +533,9 @@ class KostalEMSChargeLimitSensor(SensorEntity):
 
     @property
     def native_value(self) -> float | None:
-        if self._data.ems_status == "Inactive":
+        if self._data.ems_status == "Inactive" or self._data.ems_charge_limit_w is None:
             return None
-        return round(self._data.ems_charge_limit_pct, 1)
+        return round(self._data.ems_charge_limit_w)
 
     async def async_added_to_hass(self) -> None:
         self.async_on_remove(
