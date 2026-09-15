@@ -159,8 +159,8 @@ Without a smart meter the inverter cannot see grid import and export, so its own
 | Grid power entity | — | Source of the grid measurement. Clearing it removes the switch and its sensors. |
 | Grid target | 0 W | Grid power to regulate towards. |
 | Grid deadband | 50 W | The setpoint is held while the grid is within this distance of the target. |
-| Max discharge power | 5000 W | Upper limit for discharging. |
-| Max charge power | 5000 W | Upper limit for charging. |
+| Max discharge power | Battery maximum | Upper limit for discharging. The form is pre-filled with the maximum battery control power (11900 W on a PLENTICORE G3). Save that value, anything above it, or a blank field and the limit follows the battery maximum; save a lower value and that value is used. |
+| Max charge power | Battery maximum | Upper limit for charging, same as above. |
 | Setpoint hysteresis | 50 W | Minimum change before a new setpoint is used. |
 | Load smoothing | 0.3 | EMA alpha per calculation, 0.05–1: `1` = raw value, lower = smoother but slower. |
 

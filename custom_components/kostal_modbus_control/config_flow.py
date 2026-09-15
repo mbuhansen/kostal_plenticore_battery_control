@@ -33,8 +33,8 @@ from .const import (
     CONF_SOURCE_GRID_POWER_ENTITY,
     CONF_GRID_TARGET_W, DEFAULT_GRID_TARGET_W,
     CONF_GRID_DEADBAND_W, DEFAULT_GRID_DEADBAND_W,
-    CONF_EXTERNAL_CONTROL_MAX_DISCHARGE_W, DEFAULT_EXTERNAL_CONTROL_MAX_DISCHARGE_W,
-    CONF_EXTERNAL_CONTROL_MAX_CHARGE_W, DEFAULT_EXTERNAL_CONTROL_MAX_CHARGE_W,
+    CONF_EXTERNAL_CONTROL_MAX_DISCHARGE_W,
+    CONF_EXTERNAL_CONTROL_MAX_CHARGE_W,
     CONF_EXTERNAL_CONTROL_HYSTERESIS_W, DEFAULT_EXTERNAL_CONTROL_HYSTERESIS_W,
     CONF_EXTERNAL_CONTROL_EMA_ALPHA, DEFAULT_EXTERNAL_CONTROL_EMA_ALPHA, MIN_EXTERNAL_CONTROL_EMA_ALPHA,
 )
@@ -244,9 +244,16 @@ class KostalOptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        max_power = self._max_battery_power_w()
         if user_input is not None:
             if not user_input.get(CONF_SOURCE_GRID_POWER_ENTITY):
                 user_input.pop(CONF_SOURCE_GRID_POWER_ENTITY, None)
+            for key in (CONF_EXTERNAL_CONTROL_MAX_DISCHARGE_W, CONF_EXTERNAL_CONTROL_MAX_CHARGE_W):
+                value = user_input.get(key)
+                # Empty, or the battery maximum or above: store nothing, so the
+                # limit follows the maximum battery control power
+                if value is None or (max_power is not None and value >= max_power):
+                    user_input.pop(key, None)
             return self.async_create_entry(data=user_input)
 
         current = self.config_entry.options
@@ -261,13 +268,15 @@ class KostalOptionsFlowHandler(config_entries.OptionsFlow):
                     CONF_GRID_DEADBAND_W,
                     default=current.get(CONF_GRID_DEADBAND_W, DEFAULT_GRID_DEADBAND_W),
                 ): _number_selector(0.0, 5000.0, 10.0, "W"),
+                # suggested_value instead of default, so the field can be cleared
+                # to follow the battery maximum again
                 vol.Optional(
                     CONF_EXTERNAL_CONTROL_MAX_DISCHARGE_W,
-                    default=current.get(CONF_EXTERNAL_CONTROL_MAX_DISCHARGE_W, DEFAULT_EXTERNAL_CONTROL_MAX_DISCHARGE_W),
+                    description={"suggested_value": current.get(CONF_EXTERNAL_CONTROL_MAX_DISCHARGE_W, max_power)},
                 ): _number_selector(0.0, 50000.0, 100.0, "W"),
                 vol.Optional(
                     CONF_EXTERNAL_CONTROL_MAX_CHARGE_W,
-                    default=current.get(CONF_EXTERNAL_CONTROL_MAX_CHARGE_W, DEFAULT_EXTERNAL_CONTROL_MAX_CHARGE_W),
+                    description={"suggested_value": current.get(CONF_EXTERNAL_CONTROL_MAX_CHARGE_W, max_power)},
                 ): _number_selector(0.0, 50000.0, 100.0, "W"),
                 vol.Optional(
                     CONF_EXTERNAL_CONTROL_HYSTERESIS_W,
@@ -285,6 +294,11 @@ class KostalOptionsFlowHandler(config_entries.OptionsFlow):
             data_schema=schema,
             description_placeholders={"meter_note": self._meter_note()},
         )
+
+    def _max_battery_power_w(self) -> float | None:
+        """Maximum battery control power rounded up to 100 W, when the integration knows it."""
+        data = self.hass.data.get(DOMAIN, {}).get(self.config_entry.entry_id)
+        return data.max_battery_power_step_w() if data is not None else None
 
     def _meter_note(self) -> str:
         data = self.hass.data.get(DOMAIN, {}).get(self.config_entry.entry_id)

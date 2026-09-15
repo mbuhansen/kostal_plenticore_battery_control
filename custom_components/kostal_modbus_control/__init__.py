@@ -98,8 +98,6 @@ from .const import (
     CONF_EXTERNAL_CONTROL_EMA_ALPHA,
     DEFAULT_GRID_TARGET_W,
     DEFAULT_GRID_DEADBAND_W,
-    DEFAULT_EXTERNAL_CONTROL_MAX_DISCHARGE_W,
-    DEFAULT_EXTERNAL_CONTROL_MAX_CHARGE_W,
     DEFAULT_EXTERNAL_CONTROL_HYSTERESIS_W,
     DEFAULT_EXTERNAL_CONTROL_EMA_ALPHA,
     MIN_EXTERNAL_CONTROL_EMA_ALPHA,
@@ -377,8 +375,9 @@ class KostalData:
     source_grid_power_entity: str | None = None
     grid_target_w: float = DEFAULT_GRID_TARGET_W
     grid_deadband_w: float = DEFAULT_GRID_DEADBAND_W
-    external_control_max_discharge_w: float = DEFAULT_EXTERNAL_CONTROL_MAX_DISCHARGE_W
-    external_control_max_charge_w: float = DEFAULT_EXTERNAL_CONTROL_MAX_CHARGE_W
+    # None = follow the maximum battery control power
+    external_control_max_discharge_w: float | None = None
+    external_control_max_charge_w: float | None = None
     external_control_hysteresis_w: float = DEFAULT_EXTERNAL_CONTROL_HYSTERESIS_W
     external_control_ema_alpha: float = DEFAULT_EXTERNAL_CONTROL_EMA_ALPHA
     last_inverter_control_setpoint_w: float | None = None
@@ -716,12 +715,10 @@ def _apply_grid_control_options(options: Any, data: KostalData) -> None:
     data.source_grid_power_entity = new_entity
     data.grid_target_w = float(options.get(CONF_GRID_TARGET_W, DEFAULT_GRID_TARGET_W))
     data.grid_deadband_w = float(options.get(CONF_GRID_DEADBAND_W, DEFAULT_GRID_DEADBAND_W))
-    data.external_control_max_discharge_w = float(
-        options.get(CONF_EXTERNAL_CONTROL_MAX_DISCHARGE_W, DEFAULT_EXTERNAL_CONTROL_MAX_DISCHARGE_W)
-    )
-    data.external_control_max_charge_w = float(
-        options.get(CONF_EXTERNAL_CONTROL_MAX_CHARGE_W, DEFAULT_EXTERNAL_CONTROL_MAX_CHARGE_W)
-    )
+    max_discharge = options.get(CONF_EXTERNAL_CONTROL_MAX_DISCHARGE_W)
+    max_charge = options.get(CONF_EXTERNAL_CONTROL_MAX_CHARGE_W)
+    data.external_control_max_discharge_w = None if max_discharge is None else float(max_discharge)
+    data.external_control_max_charge_w = None if max_charge is None else float(max_charge)
     data.external_control_hysteresis_w = float(
         options.get(CONF_EXTERNAL_CONTROL_HYSTERESIS_W, DEFAULT_EXTERNAL_CONTROL_HYSTERESIS_W)
     )

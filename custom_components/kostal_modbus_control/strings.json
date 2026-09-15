@@ -46,8 +46,8 @@
                     "source_grid_power_entity": "Grid power entity (blank = off)",
                     "grid_target_w": "Grid target (W)",
                     "grid_deadband_w": "Grid deadband (W)",
-                    "external_control_max_discharge_w": "Max discharge power (W)",
-                    "external_control_max_charge_w": "Max charge power (W)",
+                    "external_control_max_discharge_w": "Max discharge power (W, blank = battery maximum)",
+                    "external_control_max_charge_w": "Max charge power (W, blank = battery maximum)",
                     "external_control_hysteresis_w": "Setpoint hysteresis (W)",
                     "external_control_ema_alpha": "Load smoothing (EMA alpha, 0.05-1)"
                 },

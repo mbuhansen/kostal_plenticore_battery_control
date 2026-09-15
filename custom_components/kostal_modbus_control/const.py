@@ -272,8 +272,8 @@ DEFAULT_GRID_TARGET_W = 0.0
 # lagging 2 s. Alpha 0.5 started to hunt (±400 W) with that slow a response.
 # Alpha applies per calculation, so a faster grid entity smooths less in time.
 DEFAULT_GRID_DEADBAND_W = 50.0
-DEFAULT_EXTERNAL_CONTROL_MAX_DISCHARGE_W = 5000.0
-DEFAULT_EXTERNAL_CONTROL_MAX_CHARGE_W = 5000.0
+# Max charge/discharge power have no default: without a stored value they
+# follow the maximum battery control power, like the charge/discharge rates.
 DEFAULT_EXTERNAL_CONTROL_HYSTERESIS_W = 50.0
 DEFAULT_EXTERNAL_CONTROL_EMA_ALPHA = 0.3
 MIN_EXTERNAL_CONTROL_EMA_ALPHA = 0.05

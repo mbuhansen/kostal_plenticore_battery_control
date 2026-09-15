@@ -1329,17 +1329,20 @@ class KostalInverterControlSwitch(KostalBaseSwitch, RestoreEntity):
         }
 
     def _clamp_target_watts(self, target_watts: float) -> float:
-        """Cap the target by the configured maximum and the maximum battery control power."""
-        max_power = self._data.max_battery_power_step_w()
+        """Cap the target by the configured maximum and the maximum battery control power.
+
+        Without a configured maximum only the maximum battery control power
+        applies; when that is unknown too, the inverter clamps the setpoint.
+        """
         if target_watts > 0.0:
-            discharge_cap = self._data.external_control_max_discharge_w
-            if max_power is not None:
-                discharge_cap = min(discharge_cap, max_power)
-            return min(target_watts, max(0.0, discharge_cap))
-        charge_cap = self._data.external_control_max_charge_w
-        if max_power is not None:
-            charge_cap = min(charge_cap, max_power)
-        return max(target_watts, -max(0.0, charge_cap))
+            cap = self._power_cap(self._data.external_control_max_discharge_w)
+            return target_watts if cap is None else min(target_watts, cap)
+        cap = self._power_cap(self._data.external_control_max_charge_w)
+        return target_watts if cap is None else max(target_watts, -cap)
+
+    def _power_cap(self, configured_w: float | None) -> float | None:
+        caps = [c for c in (configured_w, self._data.max_battery_power_step_w()) if c is not None]
+        return max(0.0, min(caps)) if caps else None
 
     def _grid_target_watts(self, inputs: dict[str, float]) -> tuple[float, str]:
         """Return the signed battery target (+ discharge, - charge) and a status."""
