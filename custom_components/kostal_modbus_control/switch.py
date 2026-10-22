@@ -59,6 +59,7 @@ from .const import (
     PREDBAT_HOLD_SETTLE_SECONDS,
     PREDBAT_RESERVE_ENTITY,
     PREDBAT_RESERVE_INACTIVE_PERCENT,
+    PREDBAT_SET_RESERVE_ENTITY,
     POWER_RATE_STEP_W,
     REG_VOLTAGE_PHASE1,
     REG_VOLTAGE_PHASE2,
@@ -533,6 +534,30 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
             async_track_state_change_event(
                 self.hass, [PREDBAT_RESERVE_ENTITY], self._async_reserve_hold_tick
             )
+        )
+        self.async_on_remove(
+            async_track_state_change_event(
+                self.hass,
+                [PREDBAT_MODE_ENTITY, PREDBAT_SET_RESERVE_ENTITY],
+                self._async_ensure_set_reserve,
+            )
+        )
+        await self._async_ensure_set_reserve()
+
+    async def _async_ensure_set_reserve(self, *args) -> None:
+        """Turn on Predbat's Set Reserve while Predbat is active, so the reserve hold works."""
+        if not self._is_predbat_active():
+            return
+        state = self.hass.states.get(PREDBAT_SET_RESERVE_ENTITY)
+        if state is None or state.state != "off":
+            return
+        _LOGGER.warning(
+            "Predbat is active but %s is off — turning it on, the reserve hold needs it",
+            PREDBAT_SET_RESERVE_ENTITY,
+        )
+        self._write_activity(f"Predbat: turning on {PREDBAT_SET_RESERVE_ENTITY} for the reserve hold")
+        await self.hass.services.async_call(
+            "switch", "turn_on", {"entity_id": PREDBAT_SET_RESERVE_ENTITY}, blocking=False
         )
 
     def _predbat_reserve_percent(self) -> float | None:
