@@ -305,6 +305,9 @@ PREDBAT_HOLD_SETTLE_SECONDS = 45.0
 # reserve's resting value Predbat is asking for a hold at that SOC.
 PREDBAT_RESERVE_ENTITY = "input_number.predbat_reserve"
 PREDBAT_RESERVE_INACTIVE_PERCENT = 5.0
+# Predbat only raises the reserve with Set Reserve on, so it is turned on while
+# Predbat is in an active control mode.
+PREDBAT_SET_RESERVE_ENTITY = "switch.predbat_set_reserve_enable"
 
 # Grid connection point export threshold (Watts) that must be sustained for
 # PREDBAT_LOW_POWER_SUSPEND_DELAY_SECONDS before the low-power charge loop
