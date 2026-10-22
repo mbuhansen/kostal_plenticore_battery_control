@@ -106,6 +106,8 @@ While active, `Charge Start` compares the battery SoC against `predbat.best_char
 
 The 1-point start band and the 1-point hold band (`PREDBAT_CHARGE_START_DELTA` and `PREDBAT_HOLD_DELTA` in `const.py`) form a 2-point hysteresis window, so the switch does not flip between charging and holding on every poll.
 
+**Reserve hold.** Predbat holds a charge target it has reached by raising `input_number.predbat_reserve` and turning `Charge Start` off. While `Charge Start` is off, no other control switch is on and Predbat is active, a reserve above 5% is treated as a hold request: discharge is blocked while the SoC is at or below the reserve, after the same 45 second settling wait following a stop. Predbat sets the reserve to its target + 1% for a charge hold, the same band as `best_charge_limit + 1%` above, and to the SoC + 1% for `Hold for car`. It is released when the reserve drops back to 5%, the SoC rises above the reserve, or another control switch is turned on. The inverter's own minimum SOC register is not used for this.
+
 Two Predbat features are followed automatically:
 
 *   **Hold for car** — when `predbat.status` contains `Hold for car` without an active charge window, the decision is forced to hold so the battery does not discharge into the car charger.
@@ -288,10 +290,10 @@ KSEM sensors are grouped under their own device, separate from the inverter.
 
 | Status | Meaning |
 |---|---|
-| `Inactive` | Charge Start is off, or Predbat is not in an active control mode |
+| `Inactive` | Charge Start is off with no reserve hold, or Predbat is not in an active control mode |
 | `Waiting` | Settling after a charge stop, or the SoC / `best_charge_limit` reading is not available yet |
 | `Charge` | SoC is below the start threshold — the inverter is being told to charge |
-| `Hold` | SoC is at the target — discharge is blocked to hold it there |
+| `Hold` | SoC is at the target, also while Charge Start is off and Predbat's reserve asks for a hold — discharge is blocked to hold it there |
 | `Hold for car` | Predbat reported `Hold for car`, so discharge is blocked while the car charges |
 | `Low Power Suspended` | Low-power charging is capped and the house is exporting, so the setpoint writes are paused |
 

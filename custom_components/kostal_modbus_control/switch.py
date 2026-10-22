@@ -56,6 +56,9 @@ from .const import (
     PREDBAT_LOW_POWER_SUSPEND_DELAY_SECONDS,
     PREDBAT_LOW_POWER_RESUME_TOLERANCE_FRACTION,
     PREDBAT_LOW_POWER_RESUME_TOLERANCE_FRACTION_BI,
+    PREDBAT_HOLD_SETTLE_SECONDS,
+    PREDBAT_RESERVE_ENTITY,
+    PREDBAT_RESERVE_INACTIVE_PERCENT,
     POWER_RATE_STEP_W,
     REG_VOLTAGE_PHASE1,
     REG_VOLTAGE_PHASE2,
@@ -345,8 +348,10 @@ class KostalBaseSwitch(SwitchEntity):
 
         # Ensure mutually exclusive behavior
         for switch in self._related_switches:
-            if switch is not self and switch.is_on:
-                await switch.async_turn_off()
+            if switch is not self:
+                if switch.is_on:
+                    await switch.async_turn_off()
+                await switch.async_release_background_hold()
 
         self._faulted = False
         self._set_resume_pending(False)
@@ -485,6 +490,9 @@ class KostalBaseSwitch(SwitchEntity):
 
         return float(stop_setpoint_watts)
 
+    async def async_release_background_hold(self) -> None:
+        """Release any hold this switch keeps while it is off, before another switch takes over."""
+
     async def _pre_start_action(self):
         """Køres straks ved start, inden eventuel ventetid på effekt-setpunktet."""
         pass
@@ -511,6 +519,114 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         self._predbat_low_power_capping: bool = False
         self._predbat_low_power_suspended: bool = False
         self._predbat_low_power_export_since: float | None = None
+        self._reserve_holding: bool = False
+        self._reserve_hold_lock = asyncio.Lock()
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            async_track_time_interval(
+                self.hass, self._async_reserve_hold_tick, timedelta(seconds=self._loop_interval)
+            )
+        )
+        self.async_on_remove(
+            async_track_state_change_event(
+                self.hass, [PREDBAT_RESERVE_ENTITY], self._async_reserve_hold_tick
+            )
+        )
+
+    def _predbat_reserve_percent(self) -> float | None:
+        """Return input_number.predbat_reserve in percent, or None."""
+        state = self.hass.states.get(PREDBAT_RESERVE_ENTITY)
+        if state is None:
+            return None
+        try:
+            return float(state.state)
+        except (ValueError, TypeError):
+            return None
+
+    def _battery_soc(self) -> float | None:
+        coordinator = self._data.coordinator
+        if coordinator is None or coordinator.data is None:
+            return None
+        return coordinator.data.get(REG_BATTERY_SOC)
+
+    async def _async_reserve_hold_tick(self, *args) -> None:
+        """While Charge Start is off, hold the battery on Predbat's reserve.
+
+        Predbat holds a reached charge target by raising its reserve and turning
+        Charge Start off. Above its resting value the reserve is a hold request:
+        block discharge (1040 = 0) while SOC is at or below it.
+        """
+        if self._attr_is_on or self._reserve_hold_lock.locked():
+            return
+        async with self._reserve_hold_lock:
+            try:
+                await self._evaluate_reserve_hold()
+            except Exception as err:
+                self._data.mark_communication_lost(f"{self.name} reserve hold: {err}")
+                _LOGGER.warning("Predbat reserve hold: write failed: %s", err)
+                await self._data.handler.close()
+
+    async def _evaluate_reserve_hold(self) -> None:
+        if self._attr_is_on:
+            return
+        # Predbat sets the reserve to target + 1 for a charge hold (the same band as
+        # best_charge_limit + PREDBAT_HOLD_DELTA above) and to SOC + 1 for a car hold
+        reserve = self._predbat_reserve_percent()
+        soc = self._battery_soc()
+        other_switch_on = any(switch is not self and switch.is_on for switch in self._related_switches)
+        should_hold = (
+            self._is_predbat_active()
+            and not other_switch_on
+            and reserve is not None
+            and soc is not None
+            and reserve >= PREDBAT_RESERVE_INACTIVE_PERCENT + 0.5
+            and soc <= reserve
+        )
+        if not should_hold:
+            await self._release_reserve_hold()
+            return
+        assert soc is not None and reserve is not None
+
+        if time.time() - self._data.last_stop_time < PREDBAT_HOLD_SETTLE_SECONDS:
+            _LOGGER.debug("Predbat reserve hold: waiting for the inverter to settle after the last stop")
+            return
+
+        hold_status = "Hold for car" if self._predbat_car_hold_active() else "Hold"
+        if not self._reserve_holding:
+            _LOGGER.info(
+                "Predbat reserve hold: SOC=%.1f%% <= reserve=%.1f%% — blocking discharge (%s)",
+                soc,
+                reserve,
+                hold_status,
+            )
+            self._write_activity(
+                f"Predbat {hold_status.lower()}: blocking discharge because SOC={soc:.1f}% <= reserve {reserve:.1f}%"
+            )
+            self._reserve_holding = True
+        self._set_predbat_status(hold_status)
+        await self._data.handler.write_float(REG_BATTERY_MAX_DISCHARGE_POWER_W, 0.0)
+
+    async def _release_reserve_hold(self) -> None:
+        """Restore free discharge if the reserve hold blocked it. Caller holds the lock."""
+        if not self._reserve_holding:
+            return
+        self._reserve_holding = False
+        _LOGGER.info("Predbat reserve hold: releasing inverter")
+        self._write_activity("Predbat hold: releasing inverter")
+        if not self._attr_is_on:
+            self._set_predbat_status("Inactive")
+        await self._restore_max_discharge_limit()
+
+    async def async_release_background_hold(self) -> None:
+        async with self._reserve_hold_lock:
+            try:
+                await self._release_reserve_hold()
+            except Exception as err:
+                self._data.mark_communication_lost(f"{self.name} reserve hold: {err}")
+                _LOGGER.warning("Predbat reserve hold: release failed: %s", err)
+                await self._data.handler.close()
 
     def _is_predbat_active(self) -> bool:
         """Return True when select.predbat_mode exists and is in an active control mode."""
@@ -717,6 +833,12 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         return stop_setpoint_watts
 
     async def async_turn_on(self, **kwargs: Any) -> None:
+        async with self._reserve_hold_lock:
+            if self._reserve_holding:
+                # Hand the blocked 1040 over to the charge loop, which restores it
+                # when it charges or leaves its own hold
+                self._reserve_holding = False
+                self._predbat_discharge_blocked = True
         if self._is_predbat_active():
             # self._predbat_startup_block_until = time.time() + 15.0
             self._predbat_startup_block_until = None
@@ -935,11 +1057,11 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
 
         # Check 45s wait after charge stopped
         elapsed = time.time() - (self._predbat_transition_time or 0.0)
-        if elapsed < 45:
+        if elapsed < PREDBAT_HOLD_SETTLE_SECONDS:
             self._set_predbat_status("Waiting")
             # Let the inverter return to internal control before forcing 1040 to 0.
             # Blocking discharge too early here can also block PV charging.
-            _LOGGER.debug("Predbat Control: %.0fs remaining before SOC check", 45 - elapsed)
+            _LOGGER.debug("Predbat Control: %.0fs remaining before SOC check", PREDBAT_HOLD_SETTLE_SECONDS - elapsed)
             return
 
         # Final guard before SOC comparison — Charge Start is master switch
