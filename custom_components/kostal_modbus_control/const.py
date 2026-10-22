@@ -297,6 +297,14 @@ PREDBAT_ACTIVE_MODES = frozenset({
 # predbat.best_charge_limit.
 PREDBAT_CHARGE_START_DELTA = 1.0
 PREDBAT_HOLD_DELTA = 1.0
+# Seconds to let the inverter return to internal control after a charge stop
+# before forcing the discharge limit (1040) to 0 — blocking too early can also
+# block PV charging.
+PREDBAT_HOLD_SETTLE_SECONDS = 45.0
+# Predbat holds the battery on its reserve while Charge Start is off. Above the
+# reserve's resting value Predbat is asking for a hold at that SOC.
+PREDBAT_RESERVE_ENTITY = "input_number.predbat_reserve"
+PREDBAT_RESERVE_INACTIVE_PERCENT = 5.0
 
 # Grid connection point export threshold (Watts) that must be sustained for
 # PREDBAT_LOW_POWER_SUSPEND_DELAY_SECONDS before the low-power charge loop
