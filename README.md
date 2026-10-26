@@ -234,7 +234,9 @@ want to watch this happen. Each limit entity also exposes `active` and `writing`
 | Battery Model ID Text | — | Decoded battery model name |
 | EMS Grid Protection Status | — | Current state of the EMS Grid Protection function |
 | EMS Charge Limit | W | Charge limit currently computed by EMS Grid Protection |
-| Battery Max Control Power | W | Maximum power the integration clamps charge/discharge setpoints to — see Maximum Battery Control Power. Attributes show the observed and documented nominal battery current and the battery maximum voltage |
+| Battery Max Control Power | W | Maximum power the integration clamps charge/discharge setpoints to — see Maximum Battery Control Power. Attributes show the observed and documented nominal battery current, the highest battery voltage seen and the learned battery maximum voltage |
+| Battery Max Control Power Source | — | What the maximum battery control power is based on: `Power class (waiting for full charge)` until the battery has been fully charged, then `Learned after full charge`. The `learned_at` attribute shows when the maximum voltage was learned |
+| Battery Max Voltage | V | Battery maximum voltage learned at a full charge (hybrid only); unknown until the battery has reached 99 % SOC |
 | Predbat Status | — | What Predbat control is currently doing |
 | Predbat Mode | — | Whether Predbat is installed and in an active control mode |
 
@@ -345,7 +347,7 @@ affected. Inverters that do implement register `58` never make this request.
 
 *   **Control Register:** `1034` (Hybrid) / `1026` (BI) — signed absolute power setpoint in Watts (negative = charge, positive = discharge). `1034` is the battery charge power (DC) setpoint for hybrid inverters, where the battery is DC-coupled; `1026` is the battery charge power (AC) setpoint for the AC-coupled PLENTICORE BI. Selected by the inverter type chosen during setup. The setpoint register is written on its own, and the inverter clamps a setpoint above its limit itself. When the writes stop, the inverter falls back to its own control after its Modbus timeout; reading the register back still shows the last value, so it cannot tell whether external control is active.
 *   **Maximum Battery Control Power:** Setpoints are clamped to it, rounded up to the next 100 W so a rate that follows the maximum always requests the full nominal battery current.
-    *   **Hybrid:** `battery maximum voltage × nominal battery current`. The nominal battery current is measured as `1078 / battery voltage (216)`, as `1078` is that current times the actual battery voltage. The battery's maximum voltage is `1076 / nominal battery current`, as `1076` is that current times the battery's maximum voltage. The highest values seen since Home Assistant started are kept, so a temporary BMS derating does not lower them, and the result stays fixed instead of moving with the state of charge. If `1076` gives a maximum voltage more than 1.3 times the actual voltage (a model where `1076` is not based on the same current), the actual battery voltage is used instead. The current is capped by the documented current of the inverter generation, taken from the first number of the software version:
+    *   **Hybrid:** `nominal battery current × battery maximum voltage`. The nominal battery current is the documented current of the inverter generation, taken from the first number of the software version (table below). The battery's maximum voltage depends on the battery and cannot be read from the inverter, so it is learned: the highest battery voltage (register `216`) seen at 99 % SOC or more. It is saved and kept across restarts and updates, so the value stays fixed instead of moving with the state of charge or with a BMS derating at a low state of charge. Until the battery has been fully charged once, the power class (register `800`) is used instead, e.g. 7000 W for a 7.0 — a limit that is too high is harmless, as the inverter clamps the setpoint itself. If the power class is unknown, the highest battery voltage seen is used. If the inverter generation is unknown, the current is measured as `1078 / battery voltage`. The `Battery Max Control Power Source` sensor shows which of these applies.
 
         | Inverter | Software version | Nominal battery current |
         |---|---|---|
@@ -354,7 +356,7 @@ affected. Inverters that do implement register `58` never make this request.
         | PLENTICORE G3 / MP G3 | `3.xx` / `03.xx` | 30 A |
 
     *   **BI:** the nominal AC power from the power class (register `800`): 5500 W for the BI 5.5/26 and 10000 W for the BI 10/26, or `1078` when the power class is unknown.
-    *   The `Battery Max Control Power` sensor exposes the observed and documented nominal current and the battery maximum voltage as attributes.
+    *   The `Battery Max Control Power` sensor exposes the observed and documented nominal current, the highest battery voltage seen and the learned battery maximum voltage as attributes.
 *   **Limit Registers:** `1076` / `1078` — Maximum charge/discharge power limits read out from the battery.
 *   **Block Registers:** `1038` / `1040` — Battery max. charge/discharge power limits. Only used for blocking: written to 0 to block, and restored to the battery's own maximum (`1076` / `1078`) afterwards.
 *   **SOC Limit Registers:** `1042` / `1044` — Minimum/maximum SOC. Only in effect while actively written.
