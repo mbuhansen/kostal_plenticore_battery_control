@@ -32,6 +32,7 @@ from .const import (
     REG_INVERTER_STATE,
     REG_MODEL,
     REG_POWER_CLASS,
+    REG_INVERTER_MAX_POWER,
     REG_TOTAL_ACTIVE_POWER,
     REG_VOLTAGE_PHASE1,
     REG_VOLTAGE_PHASE2,
@@ -50,7 +51,7 @@ from .const import (
     BATTERY_NOMINAL_CURRENT_BY_GENERATION,
     BI_NOMINAL_POWER_BY_POWER_CLASS,
     MAX_POWER_SOURCE_LEARNED,
-    MAX_POWER_SOURCE_POWER_CLASS,
+    MAX_POWER_SOURCE_INVERTER_MAX_POWER,
     MAX_POWER_SOURCE_BATTERY_VOLTAGE,
     MAX_POWER_SOURCE_BI_POWER_CLASS,
     MAX_POWER_SOURCE_BI_DISCHARGE_LIMIT,
@@ -361,6 +362,8 @@ class KostalData:
     predbat_status: str = "Inactive"
     inverter_model: str = ""
     inverter_power_class: str = ""
+    # Inverter max power (531) in W, None when the inverter lacks it
+    inverter_max_power_w: float | None = None
     # Absolute power setpoint register: 1034 (DC) for hybrid, 1026 (AC) for BI
     charge_discharge_reg: int = REG_BATTERY_DC_POWER_SETPOINT_W
     # Highest 1078 / battery voltage and highest battery voltage seen, and the
@@ -504,21 +507,14 @@ class KostalData:
         documented = self.documented_battery_nominal_current()
         return documented if documented is not None else self.battery_nominal_current_observed
 
-    def power_class_w(self) -> float | None:
-        """Power class (register 800) in Watts, e.g. "7.0" is 7000 W, or None when unknown."""
-        match = re.search(r"\d+(?:[.,]\d+)?", (self.inverter_power_class or "").strip())
-        if match is None:
-            return None
-        return float(match.group().replace(",", ".")) * 1000.0
-
     def max_battery_power(self) -> tuple[float | None, str | None]:
         """Maximum battery control power in Watts and what it is based on.
 
         Hybrid: the nominal battery current times the battery's maximum voltage
-        once that is learned at a full charge. Until then the power class, or
-        the current times the highest battery voltage seen when the power class
-        is unknown. BI: the nominal AC power from the power class, or the
-        battery's discharge limit 1078 when the power class is unknown.
+        once that is learned at a full charge. Until then the inverter max power
+        (531), or the current times the highest battery voltage seen when 531 is
+        unknown. BI: the nominal AC power from the power class, or the battery's
+        discharge limit 1078 when the power class is unknown.
         """
         data = self.coordinator.data if self.coordinator is not None else None
         if data is None:
@@ -526,9 +522,9 @@ class KostalData:
 
         if self.is_battery_inverter:
             power_class = (self.inverter_power_class or "").strip()
-            power_class_w = self.power_class_w()
-            if power_class_w is not None:
-                nominal_power = BI_NOMINAL_POWER_BY_POWER_CLASS.get(power_class_w / 1000.0)
+            match = re.search(r"\d+(?:[.,]\d+)?", power_class)
+            if match is not None:
+                nominal_power = BI_NOMINAL_POWER_BY_POWER_CLASS.get(float(match.group().replace(",", ".")))
                 if nominal_power is not None:
                     return nominal_power, MAX_POWER_SOURCE_BI_POWER_CLASS
             self._warn_once(
@@ -544,9 +540,8 @@ class KostalData:
         current = self.battery_nominal_current()
         if current is not None and self.battery_max_voltage_learned is not None:
             return current * self.battery_max_voltage_learned, MAX_POWER_SOURCE_LEARNED
-        power_class_w = self.power_class_w()
-        if power_class_w is not None:
-            return power_class_w, MAX_POWER_SOURCE_POWER_CLASS
+        if self.inverter_max_power_w:
+            return self.inverter_max_power_w, MAX_POWER_SOURCE_INVERTER_MAX_POWER
         voltages = [v for v in (data.get(REG_BATTERY_VOLTAGE), self.battery_voltage_peak) if v and v > 0.0]
         if current is None or not voltages:
             return None, None
@@ -665,7 +660,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     inverter_power_class = await _read_optional_at_setup(
         partial(handler.read_string, REG_POWER_CLASS, 16), "the power class register"
     ) or ""
-    _LOGGER.info("Inverter model=%r power_class=%r", inverter_model, inverter_power_class)
+    inverter_max_power_w = await _read_optional_at_setup(
+        partial(handler.read_uint16, REG_INVERTER_MAX_POWER), "the inverter max power register"
+    )
+    _LOGGER.info(
+        "Inverter model=%r power_class=%r max_power=%s W", inverter_model, inverter_power_class, inverter_max_power_w
+    )
 
     battery_type_raw = await _read_optional_at_setup(
         partial(handler.read_uint16, REG_BATTERY_TYPE), "the battery type register"
@@ -712,6 +712,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         inverter_timeout=timeout,
         inverter_model=inverter_model,
         inverter_power_class=inverter_power_class,
+        inverter_max_power_w=float(inverter_max_power_w) if inverter_max_power_w else None,
         charge_discharge_reg=charge_discharge_reg,
         ksem_handler=ksem_handler,
     )
