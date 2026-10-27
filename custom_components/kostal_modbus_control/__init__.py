@@ -84,6 +84,9 @@ from .const import (
     REG_CURRENT_PHASE1,
     REG_CURRENT_PHASE2,
     REG_CURRENT_PHASE3,
+    REG_ACTIVE_POWER_PHASE1,
+    REG_ACTIVE_POWER_PHASE2,
+    REG_ACTIVE_POWER_PHASE3,
     REG_SENSOR_TYPE,
     CONF_KSEM_HOST,
     KSEM_PORT,
@@ -249,6 +252,9 @@ class KostalCoordinator(DataUpdateCoordinator[dict[Any, Any]]):
                 REG_CURRENT_PHASE1,
                 REG_CURRENT_PHASE2,
                 REG_CURRENT_PHASE3,
+                REG_ACTIVE_POWER_PHASE1,
+                REG_ACTIVE_POWER_PHASE2,
+                REG_ACTIVE_POWER_PHASE3,
             ):
                 data[address] = await self._read_optional(
                     address,

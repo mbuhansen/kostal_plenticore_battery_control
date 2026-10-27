@@ -103,6 +103,11 @@ REG_VOLTAGE_PHASE3 = 250          # Voltage phase 3 powermeter (V) - Float (0xFA
 REG_CURRENT_PHASE1 = 222          # Current phase 1 powermeter (A) - Float (0xDE)
 REG_CURRENT_PHASE2 = 232          # Current phase 2 powermeter (A) - Float (0xE8)
 REG_CURRENT_PHASE3 = 242          # Current phase 3 powermeter (A) - Float (0xF2)
+# The phase currents are unsigned; the active power per phase gives the
+# direction (positive = import from the grid, negative = export)
+REG_ACTIVE_POWER_PHASE1 = 224     # Active power phase 1 powermeter (W) - Float (0xE0)
+REG_ACTIVE_POWER_PHASE2 = 234     # Active power phase 2 powermeter (W) - Float (0xEA)
+REG_ACTIVE_POWER_PHASE3 = 244     # Active power phase 3 powermeter (W) - Float (0xF4)
 REG_SENSOR_TYPE = 1082            # Installed sensor type - U8 (0x43A)
 
 SENSOR_TYPE_MAP = {

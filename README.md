@@ -228,7 +228,7 @@ want to watch this happen. Each limit entity also exposes `active` and `writing`
 | Battery Max Charge Power Limit Read-out | W | Dynamic maximum charge power from inverter |
 | Battery Max Discharge Power Limit Read-out | W | Dynamic maximum discharge power from inverter |
 | Grid Power | W | Grid power from the powermeter |
-| Grid Current Phase 1–3 | A | Phase currents at the grid connection point |
+| Grid Current Phase 1–3 | A | Phase currents at the grid connection point: positive when the phase imports from the grid, negative when it exports |
 | Smart Meter Type | — | Detected smart meter model or "No sensor" |
 | Battery Type | — | Detected battery manufacturer/type |
 | Battery Model ID Text | — | Decoded battery model name |
@@ -364,7 +364,7 @@ affected. Inverters that do implement register `58` never make this request.
 *   **Inverter State Register:** `56` — Inverter state2 as U32. Follows the inverter's Modbus byte-order setting (register `5`), like the float registers do.
 *   **Software Version Register:** `58` (`0x3A`) — Overall software version (UI / SW), read as a 13-register string.
 *   **Battery Info Registers:** `512` / `525` / `527` / `586` — Gross capacity, model ID, BMS serial and firmware. These U32 values are always big-endian (most significant word first) even when the byte-order setting is little-endian (CDAB), so they are read without the word swap the other 32-bit values need. Firmware is packed as major byte then minor byte, so `794` (`0x031A`) is reported as `3.26`. Gross capacity is stored under its own coordinator key because register `512` is also the KSEM's imported-energy register.
-*   **Phase Current Registers:** `222` / `232` / `242` — Grid phase currents from smart meter.
+*   **Phase Current Registers:** `222` / `232` / `242` — Grid phase currents from smart meter. They are unsigned; the sensors take the direction from the active power per phase, `224` / `234` / `244` (positive = import, negative = export). EMS Grid Protection uses the unsigned currents.
 *   **Sensor Type Register:** `1082` — Installed smart meter type. Read once during setup to detect a KSEM, and on every poll for the EMS switch.
 *   **Battery Management Register:** `1080` — Battery management mode. Read during setup to warn when it is not `0x02` (Modbus).
 *   **KSEM Power Registers:** `40972` / `40974` / `40976` / `40982` / `40984` — Additional KSEM power flow values.
