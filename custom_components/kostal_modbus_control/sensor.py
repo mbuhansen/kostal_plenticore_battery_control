@@ -63,6 +63,9 @@ from .const import (
     REG_CURRENT_PHASE1,
     REG_CURRENT_PHASE2,
     REG_CURRENT_PHASE3,
+    REG_ACTIVE_POWER_PHASE1,
+    REG_ACTIVE_POWER_PHASE2,
+    REG_ACTIVE_POWER_PHASE3,
     REG_SENSOR_TYPE,
     SENSOR_TOTAL_ACTIVE_POWER,
     SENSOR_VOLTAGE_PHASE1,
@@ -456,31 +459,47 @@ class KostalBatteryMaxDischargeLimitSensor(KostalBaseSensor):
     _attr_state_class = SensorStateClass.MEASUREMENT
 
 
-class KostalCurrentPhase1Sensor(KostalBaseSensor):
+class KostalGridCurrentSensor(KostalBaseSensor):
+    """Phase current with the direction of the phase's active power.
+
+    The powermeter's phase current is unsigned, so it is shown positive when
+    the phase imports from the grid and negative when it exports. EMS Grid
+    Protection reads the unsigned current from the coordinator data directly.
+    """
+
+    _power_address: int
+    _attr_device_class = SensorDeviceClass.CURRENT
+    _attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    @property
+    def native_value(self):
+        current = super().native_value
+        if current is None:
+            return None
+        power = self.coordinator.data.get(self._power_address)
+        return -abs(current) if power is not None and power < 0.0 else abs(current)
+
+
+class KostalCurrentPhase1Sensor(KostalGridCurrentSensor):
     _key = SENSOR_CURRENT_PHASE1
     _name = "Grid Current Phase 1"
     _address = REG_CURRENT_PHASE1
-    _attr_device_class = SensorDeviceClass.CURRENT
-    _attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
-    _attr_state_class = SensorStateClass.MEASUREMENT
+    _power_address = REG_ACTIVE_POWER_PHASE1
 
 
-class KostalCurrentPhase2Sensor(KostalBaseSensor):
+class KostalCurrentPhase2Sensor(KostalGridCurrentSensor):
     _key = SENSOR_CURRENT_PHASE2
     _name = "Grid Current Phase 2"
     _address = REG_CURRENT_PHASE2
-    _attr_device_class = SensorDeviceClass.CURRENT
-    _attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
-    _attr_state_class = SensorStateClass.MEASUREMENT
+    _power_address = REG_ACTIVE_POWER_PHASE2
 
 
-class KostalCurrentPhase3Sensor(KostalBaseSensor):
+class KostalCurrentPhase3Sensor(KostalGridCurrentSensor):
     _key = SENSOR_CURRENT_PHASE3
     _name = "Grid Current Phase 3"
     _address = REG_CURRENT_PHASE3
-    _attr_device_class = SensorDeviceClass.CURRENT
-    _attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
-    _attr_state_class = SensorStateClass.MEASUREMENT
+    _power_address = REG_ACTIVE_POWER_PHASE3
 
 
 class KostalVoltagePhase1Sensor(KostalBaseSensor):
