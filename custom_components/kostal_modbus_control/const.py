@@ -16,7 +16,8 @@ DEFAULT_MODBUS_TIMEOUT = 30  # Default inverter timeout setting
 REG_MODBUS_BYTE_ORDER = 5        # Modbus byte order - U16 (0x05) 0=little-endian CDAB, 1=big-endian ABCD
 REG_MANUFACTURER = 535        # Inverter Manufacturer (String 16)
 REG_MODEL = 768               # Productname (String 32)
-REG_POWER_CLASS = 800         # Power class e.g. "10" (String 32)
+REG_POWER_CLASS = 800         # Power class e.g. "10" (String 32). "7.0" on a G1, "L G3" on a G3
+REG_INVERTER_MAX_POWER = 531  # Inverter max power (W) - U16 (0x213). 6999 on a G1 7.0, 15000 on a G3 L 15 kW
 REG_SERIAL = 559              # Inverter Serial Number (String 16)
 REG_SOFTWARE_VERSION = 58     # Overall software version (UI / SW) - String 13 (0x3A)
 SOFTWARE_VERSION_LENGTH = 13  # Registers, per the Kostal register table
@@ -38,19 +39,26 @@ REG_BATTERY_MAX_DISCHARGE_POWER_W = 1040    # Battery max. discharge power limit
 REG_BATTERY_MIN_SOC = 1042        # Minimum SOC % - Float (0x412) RW
 REG_BATTERY_MAX_SOC = 1044        # Maximum SOC % - Float (0x414) RW
 
-# Maximum battery control power. Hybrid inverters: the battery's maximum
-# voltage times the nominal battery current (Inom). Inom is measured as
-# 1078 / battery voltage (on a G3, 1078 is exactly 30 A times the actual
-# voltage), keeping the highest value seen so a BMS derating does not lower it,
-# and capped by the documented Inom of the inverter generation — the first
-# number of the software version: 01.30.12092 = G1, 02.15.xxxxx = G2,
-# 3.07.00.xxxxx = G3 (and MP G3). The maximum voltage is the highest 1076 / Inom
-# (on a G3, 1076 is 30 A times 395 V), which keeps the value fixed instead of
-# moving with the state of charge.
-# A maximum voltage derived from 1076 above this many times the actual battery
-# voltage means 1076 is not based on Inom on that model; the actual voltage is
-# used instead. Lithium packs span roughly 1.2x from empty to full.
-BATTERY_MAX_VOLTAGE_PLAUSIBLE_RATIO = 1.3
+# Maximum battery control power. Hybrid inverters: the documented nominal
+# battery current (Inom) of the inverter generation — the first number of the
+# software version: 01.30.12092 = G1, 02.15.xxxxx = G2, 3.07.00.xxxxx = G3 (and
+# MP G3) — times the battery's maximum voltage. The maximum voltage depends on
+# the battery and cannot be read: 1076 is not based on Inom with every battery
+# (with a Dyness Tower on a G1 it is the battery's own charge limit at the
+# actual voltage). It is learned instead as the highest battery voltage seen at
+# a state of charge of at least BATTERY_FULL_SOC, and kept across restarts.
+# Until then the inverter max power (register 531) is used — the power class
+# is not a number on a G3. A limit that is too high is harmless, as the
+# inverter clamps a setpoint above its limit itself, while one that is too low
+# locks the user out.
+BATTERY_FULL_SOC = 99.0
+# What the maximum battery control power is based on, shown by the
+# Battery Max Control Power Source sensor
+MAX_POWER_SOURCE_LEARNED = "Learned after full charge"
+MAX_POWER_SOURCE_INVERTER_MAX_POWER = "Inverter max power (waiting for full charge)"
+MAX_POWER_SOURCE_BATTERY_VOLTAGE = "Battery voltage (waiting for full charge)"
+MAX_POWER_SOURCE_BI_POWER_CLASS = "Power class"
+MAX_POWER_SOURCE_BI_DISCHARGE_LIMIT = "Battery discharge limit 1078"
 BATTERY_NOMINAL_CURRENT_BY_GENERATION = {
     1: 13.0,  # PLENTICORE plus G1
     2: 13.0,  # PLENTICORE plus G2
@@ -198,6 +206,8 @@ SENSOR_PREDBAT_MODE = "predbat_mode"
 SENSOR_BATTERY_DC_POWER_SETPOINT = "battery_dc_power_setpoint"
 SENSOR_BATTERY_AC_POWER_SETPOINT = "battery_ac_power_setpoint"
 SENSOR_BATTERY_MAX_CONTROL_POWER = "battery_max_control_power"
+SENSOR_BATTERY_MAX_CONTROL_POWER_SOURCE = "battery_max_control_power_source"
+SENSOR_BATTERY_MAX_VOLTAGE = "battery_max_voltage"
 SENSOR_BATTERY_MAX_CHARGE_POWER_LIMIT = "battery_max_charge_power_limit"
 SENSOR_BATTERY_MAX_DISCHARGE_POWER_LIMIT = "battery_max_discharge_power_limit"
 SENSOR_BATTERY_WORK_CAPACITY = "battery_work_capacity"
@@ -354,6 +364,10 @@ NUMBER_MAX_SOC_LIMIT = "max_soc_limit"
 # out-of-range setpoint itself.
 POWER_RATE_STEP_W = 100.0
 POWER_RATE_FALLBACK_MAX_W = 20000.0
+
+# Learned battery maximum voltage, kept per config entry
+STORAGE_VERSION = 1
+STORAGE_SAVE_DELAY_SECONDS = 30
 DEFAULT_FUSE_SIZE = 25.0  # Amps — old Kostal default; user should set to actual value
 
 # SOC limits. The bottom of the min range and the top of the max range are the

@@ -84,6 +84,8 @@ from .const import (
     SENSOR_BATTERY_DC_POWER_SETPOINT,
     SENSOR_BATTERY_AC_POWER_SETPOINT,
     SENSOR_BATTERY_MAX_CONTROL_POWER,
+    SENSOR_BATTERY_MAX_CONTROL_POWER_SOURCE,
+    SENSOR_BATTERY_MAX_VOLTAGE,
     SENSOR_BATTERY_MAX_CHARGE_POWER_LIMIT,
     SENSOR_BATTERY_MAX_DISCHARGE_POWER_LIMIT,
     SENSOR_BATTERY_WORK_CAPACITY,
@@ -162,6 +164,7 @@ async def async_setup_entry(
         KostalBatteryMaxChargeLimitSensor(coordinator, entry.entry_id),
         KostalBatteryMaxDischargeLimitSensor(coordinator, entry.entry_id),
         KostalBatteryMaxControlPowerSensor(coordinator, data, entry.entry_id),
+        KostalBatteryMaxControlPowerSourceSensor(coordinator, data, entry.entry_id),
         KostalVoltagePhase1Sensor(coordinator, entry.entry_id),
         KostalVoltagePhase2Sensor(coordinator, entry.entry_id),
         KostalVoltagePhase3Sensor(coordinator, entry.entry_id),
@@ -214,6 +217,7 @@ async def async_setup_entry(
         entities.append(KostalBatteryAcPowerSetpointSensor(coordinator, entry.entry_id))
     else:
         entities.append(KostalBatteryDcPowerSetpointSensor(coordinator, entry.entry_id))
+        entities.append(KostalBatteryMaxVoltageSensor(coordinator, data, entry.entry_id))
 
     # Inverter Control sensors — only while a grid entity is selected
     if data.source_grid_power_entity:
@@ -328,12 +332,56 @@ class KostalBatteryMaxControlPowerSensor(KostalBaseSensor):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         observed = self._data.battery_nominal_current_observed
-        max_voltage = self._data.battery_max_voltage()
+        voltage_peak = self._data.battery_voltage_peak
+        max_voltage = self._data.battery_max_voltage_learned
         return {
             "nominal_current_observed": round(observed, 2) if observed is not None else None,
             "nominal_current_documented": self._data.documented_battery_nominal_current(),
+            "battery_voltage_peak": round(voltage_peak, 1) if voltage_peak is not None else None,
             "battery_max_voltage": round(max_voltage, 1) if max_voltage is not None else None,
+            "max_voltage_known": max_voltage is not None,
         }
+
+
+class KostalBatteryMaxControlPowerSourceSensor(KostalBaseSensor):
+    """What the maximum battery control power is based on — shows when it has been learned."""
+
+    _key = SENSOR_BATTERY_MAX_CONTROL_POWER_SOURCE
+    _name = "Battery Max Control Power Source"
+    _address = REG_BATTERY_MAX_DISCHARGE_LIMIT  # Not read directly — native_value is computed
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: KostalCoordinator, data, entry_id: str) -> None:
+        super().__init__(coordinator, entry_id)
+        self._data = data
+
+    @property
+    def native_value(self):
+        return self._data.max_battery_power()[1]
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {"learned_at": self._data.battery_max_voltage_learned_at}
+
+
+class KostalBatteryMaxVoltageSensor(KostalBaseSensor):
+    """Battery maximum voltage learned at a full charge, unknown until then."""
+
+    _key = SENSOR_BATTERY_MAX_VOLTAGE
+    _name = "Battery Max Voltage"
+    _address = REG_BATTERY_VOLTAGE  # Not read directly — native_value is learned
+    _attr_device_class = SensorDeviceClass.VOLTAGE
+    _attr_native_unit_of_measurement = UnitOfElectricPotential.VOLT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: KostalCoordinator, data, entry_id: str) -> None:
+        super().__init__(coordinator, entry_id)
+        self._data = data
+
+    @property
+    def native_value(self):
+        max_voltage = self._data.battery_max_voltage_learned
+        return round(max_voltage, 1) if max_voltage is not None else None
 
 
 class KostalBatteryMaxChargePowerLimitSensor(KostalBaseSensor):

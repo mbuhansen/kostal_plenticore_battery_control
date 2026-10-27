@@ -16,7 +16,9 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_UNIT_ID,
@@ -30,6 +32,7 @@ from .const import (
     REG_INVERTER_STATE,
     REG_MODEL,
     REG_POWER_CLASS,
+    REG_INVERTER_MAX_POWER,
     REG_TOTAL_ACTIVE_POWER,
     REG_VOLTAGE_PHASE1,
     REG_VOLTAGE_PHASE2,
@@ -44,9 +47,16 @@ from .const import (
     REG_BATTERY_AC_POWER_SETPOINT_W,
     REG_BATTERY_MAX_CHARGE_POWER_W,
     REG_BATTERY_MAX_DISCHARGE_POWER_W,
-    BATTERY_MAX_VOLTAGE_PLAUSIBLE_RATIO,
+    BATTERY_FULL_SOC,
     BATTERY_NOMINAL_CURRENT_BY_GENERATION,
     BI_NOMINAL_POWER_BY_POWER_CLASS,
+    MAX_POWER_SOURCE_LEARNED,
+    MAX_POWER_SOURCE_INVERTER_MAX_POWER,
+    MAX_POWER_SOURCE_BATTERY_VOLTAGE,
+    MAX_POWER_SOURCE_BI_POWER_CLASS,
+    MAX_POWER_SOURCE_BI_DISCHARGE_LIMIT,
+    STORAGE_VERSION,
+    STORAGE_SAVE_DELAY_SECONDS,
     CONF_INVERTER_TYPE,
     INVERTER_TYPE_BI,
     REG_BATTERY_WORK_CAPACITY,
@@ -352,12 +362,18 @@ class KostalData:
     predbat_status: str = "Inactive"
     inverter_model: str = ""
     inverter_power_class: str = ""
+    # Inverter max power (531) in W, None when the inverter lacks it
+    inverter_max_power_w: float | None = None
     # Absolute power setpoint register: 1034 (DC) for hybrid, 1026 (AC) for BI
     charge_discharge_reg: int = REG_BATTERY_DC_POWER_SETPOINT_W
-    # Highest 1078 / battery voltage and highest 1076 seen this session,
-    # see max_battery_power_w()
+    # Highest 1078 / battery voltage and highest battery voltage seen, and the
+    # battery's maximum voltage learned at a full charge — see
+    # max_battery_power(). Kept across restarts in store.
     battery_nominal_current_observed: float | None = None
-    battery_max_charge_limit_peak: float | None = None
+    battery_voltage_peak: float | None = None
+    battery_max_voltage_learned: float | None = None
+    battery_max_voltage_learned_at: str | None = None
+    store: Store | None = None
     scaling_warnings_logged: set[str] = field(default_factory=set)
     # User setpoints from the SOC limit numbers. The defaults equal the
     # inverter's own limits, i.e. "not in use". The number entities own the
@@ -401,52 +417,66 @@ class KostalData:
         _LOGGER.warning(message, *args)
 
     def update_observed_battery_current(self, data: dict) -> None:
-        """Track the highest nominal battery current and battery charge limit seen.
+        """Track the battery current and voltage the maximum control power is based on.
 
-        On a G3, register 1078 is exactly the nominal battery current times the
-        actual battery voltage, and 1076 is that current times the battery's
-        maximum voltage. A BMS derating lowers them, so the highest values of
-        the session are kept instead of the latest.
+        Keeps the highest 1078 / battery voltage (the nominal battery current,
+        only used when the inverter generation is unknown), the highest battery
+        voltage, and the highest battery voltage at a full charge, which is
+        taken as the battery's maximum voltage. Saved when one of them rises.
         """
-        max_charge = data.get(REG_BATTERY_MAX_CHARGE_LIMIT)
-        peak = self.battery_max_charge_limit_peak
-        if max_charge and max_charge > 0.0 and (peak is None or max_charge > peak):
-            self.battery_max_charge_limit_peak = max_charge
-
         voltage = data.get(REG_BATTERY_VOLTAGE)
-        max_discharge = data.get(REG_BATTERY_MAX_DISCHARGE_LIMIT)
-        if not voltage or voltage <= 0.0 or not max_discharge or max_discharge <= 0.0:
+        if not voltage or voltage <= 0.0:
             return
-        current = max_discharge / voltage
-        observed = self.battery_nominal_current_observed
-        if observed is None or current > observed:
-            self.battery_nominal_current_observed = current
-            _LOGGER.debug("Observed nominal battery current %.2f A (1078=%.0f W, V=%.1f V)", current, max_discharge, voltage)
+        changed = False
 
-    def battery_max_voltage(self) -> float | None:
-        """Battery's maximum voltage, as the highest 1076 / observed nominal current.
+        if self.battery_voltage_peak is None or voltage > self.battery_voltage_peak:
+            self.battery_voltage_peak = voltage
+            changed = True
 
-        Returns None when it is unknown or implausible — e.g. on a model where
-        1076 is not based on the same current as 1078 — so the caller falls
-        back to the actual battery voltage.
-        """
-        peak = self.battery_max_charge_limit_peak
-        observed = self.battery_nominal_current_observed
-        data = self.coordinator.data if self.coordinator is not None else None
-        voltage = data.get(REG_BATTERY_VOLTAGE) if data is not None else None
-        if peak is None or observed is None or not voltage or voltage <= 0.0:
-            return None
-        max_voltage = peak / observed
-        if max_voltage > voltage * BATTERY_MAX_VOLTAGE_PLAUSIBLE_RATIO:
-            self._warn_once(
-                "max_voltage_implausible",
-                "Battery maximum voltage %.0f V from register 1076 is implausible at %.0f V actual — "
-                "using the actual battery voltage for the maximum battery control power",
-                max_voltage,
-                voltage,
-            )
-            return None
-        return max(max_voltage, voltage)
+        soc = data.get(REG_BATTERY_SOC)
+        learned = self.battery_max_voltage_learned
+        if soc is not None and soc >= BATTERY_FULL_SOC and (learned is None or voltage > learned):
+            if learned is None:
+                _LOGGER.info(
+                    "Battery maximum voltage learned at %.0f%% SOC: %.1f V — the maximum battery control power "
+                    "is now based on it instead of the power class",
+                    soc,
+                    voltage,
+                )
+            else:
+                _LOGGER.debug("Battery maximum voltage raised from %.1f V to %.1f V", learned, voltage)
+            self.battery_max_voltage_learned = voltage
+            self.battery_max_voltage_learned_at = dt_util.utcnow().isoformat()
+            changed = True
+
+        max_discharge = data.get(REG_BATTERY_MAX_DISCHARGE_LIMIT)
+        if max_discharge and max_discharge > 0.0:
+            current = max_discharge / voltage
+            observed = self.battery_nominal_current_observed
+            if observed is None or current > observed:
+                self.battery_nominal_current_observed = current
+                _LOGGER.debug("Observed nominal battery current %.2f A (1078=%.0f W, V=%.1f V)", current, max_discharge, voltage)
+                changed = True
+
+        if changed and self.store is not None:
+            self.store.async_delay_save(self._storage_data, STORAGE_SAVE_DELAY_SECONDS)
+
+    def _storage_data(self) -> dict[str, Any]:
+        return {
+            "battery_nominal_current_observed": self.battery_nominal_current_observed,
+            "battery_voltage_peak": self.battery_voltage_peak,
+            "battery_max_voltage_learned": self.battery_max_voltage_learned,
+            "battery_max_voltage_learned_at": self.battery_max_voltage_learned_at,
+        }
+
+    def load_storage_data(self, stored: dict[str, Any] | None) -> None:
+        """Restore the values saved by update_observed_battery_current()."""
+        if not stored:
+            return
+        self.battery_nominal_current_observed = stored.get("battery_nominal_current_observed")
+        self.battery_voltage_peak = stored.get("battery_voltage_peak")
+        self.battery_max_voltage_learned = stored.get("battery_max_voltage_learned")
+        self.battery_max_voltage_learned_at = stored.get("battery_max_voltage_learned_at")
 
     def documented_battery_nominal_current(self) -> float | None:
         """Documented nominal battery current of the inverter generation, or None when unknown."""
@@ -463,26 +493,32 @@ class KostalData:
             self._warn_once(
                 f"version:{version}",
                 "Unknown inverter generation for software version %r — the maximum battery control power "
-                "is not capped by a documented battery current",
+                "uses the observed battery current",
                 version,
             )
         return current
 
-    def max_battery_power_w(self) -> float | None:
-        """Maximum battery control power in Watts, or None when it cannot be determined.
+    def battery_nominal_current(self) -> float | None:
+        """Documented nominal battery current, or the observed one when the generation is unknown.
 
-        Hybrid: the battery's maximum voltage times the nominal battery current,
-        where that current is the highest observed 1078 / voltage, capped by the
-        documented current of the inverter generation. Using the maximum voltage
-        keeps the value fixed instead of moving with the state of charge; the
-        inverter clamps a setpoint to its current times the actual voltage
-        itself. Falls back to the actual voltage when the maximum is unknown.
-        BI: the nominal AC power from the power class, or the battery's
+        The observed current is only a fallback: a BMS derating at a low state
+        of charge lowers 1078, so it can be below the inverter's real current.
+        """
+        documented = self.documented_battery_nominal_current()
+        return documented if documented is not None else self.battery_nominal_current_observed
+
+    def max_battery_power(self) -> tuple[float | None, str | None]:
+        """Maximum battery control power in Watts and what it is based on.
+
+        Hybrid: the nominal battery current times the battery's maximum voltage
+        once that is learned at a full charge. Until then the inverter max power
+        (531), or the current times the highest battery voltage seen when 531 is
+        unknown. BI: the nominal AC power from the power class, or the battery's
         discharge limit 1078 when the power class is unknown.
         """
         data = self.coordinator.data if self.coordinator is not None else None
         if data is None:
-            return None
+            return None, None
 
         if self.is_battery_inverter:
             power_class = (self.inverter_power_class or "").strip()
@@ -490,28 +526,30 @@ class KostalData:
             if match is not None:
                 nominal_power = BI_NOMINAL_POWER_BY_POWER_CLASS.get(float(match.group().replace(",", ".")))
                 if nominal_power is not None:
-                    return nominal_power
+                    return nominal_power, MAX_POWER_SOURCE_BI_POWER_CLASS
             self._warn_once(
                 f"power_class:{power_class}",
                 "Unknown PLENTICORE BI power class %r — using the battery discharge limit 1078 as maximum power",
                 power_class,
             )
             max_discharge = data.get(REG_BATTERY_MAX_DISCHARGE_LIMIT)
-            return max_discharge if max_discharge and max_discharge > 0.0 else None
+            if max_discharge and max_discharge > 0.0:
+                return max_discharge, MAX_POWER_SOURCE_BI_DISCHARGE_LIMIT
+            return None, None
 
-        voltage = data.get(REG_BATTERY_VOLTAGE)
-        if not voltage or voltage <= 0.0:
-            return None
-        observed = self.battery_nominal_current_observed
-        documented = self.documented_battery_nominal_current()
-        if observed is not None and documented is not None:
-            current = min(observed, documented)
-        else:
-            current = observed if observed is not None else documented
-        if current is None:
-            return None
-        max_voltage = self.battery_max_voltage()
-        return (max_voltage if max_voltage is not None else voltage) * current
+        current = self.battery_nominal_current()
+        if current is not None and self.battery_max_voltage_learned is not None:
+            return current * self.battery_max_voltage_learned, MAX_POWER_SOURCE_LEARNED
+        if self.inverter_max_power_w:
+            return self.inverter_max_power_w, MAX_POWER_SOURCE_INVERTER_MAX_POWER
+        voltages = [v for v in (data.get(REG_BATTERY_VOLTAGE), self.battery_voltage_peak) if v and v > 0.0]
+        if current is None or not voltages:
+            return None, None
+        return current * max(voltages), MAX_POWER_SOURCE_BATTERY_VOLTAGE
+
+    def max_battery_power_w(self) -> float | None:
+        """Maximum battery control power in Watts, or None when it cannot be determined."""
+        return self.max_battery_power()[0]
 
     def max_battery_power_step_w(self) -> float | None:
         """Maximum battery control power rounded up to a whole rate step (100 W).
@@ -622,7 +660,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     inverter_power_class = await _read_optional_at_setup(
         partial(handler.read_string, REG_POWER_CLASS, 16), "the power class register"
     ) or ""
-    _LOGGER.info("Inverter model=%r power_class=%r", inverter_model, inverter_power_class)
+    inverter_max_power_w = await _read_optional_at_setup(
+        partial(handler.read_uint16, REG_INVERTER_MAX_POWER), "the inverter max power register"
+    )
+    _LOGGER.info(
+        "Inverter model=%r power_class=%r max_power=%s W", inverter_model, inverter_power_class, inverter_max_power_w
+    )
 
     battery_type_raw = await _read_optional_at_setup(
         partial(handler.read_uint16, REG_BATTERY_TYPE), "the battery type register"
@@ -669,9 +712,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         inverter_timeout=timeout,
         inverter_model=inverter_model,
         inverter_power_class=inverter_power_class,
+        inverter_max_power_w=float(inverter_max_power_w) if inverter_max_power_w else None,
         charge_discharge_reg=charge_discharge_reg,
         ksem_handler=ksem_handler,
     )
+
+    data.store = Store(hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}")
+    data.load_storage_data(await data.store.async_load())
 
     coordinator = KostalCoordinator(hass, handler, data, host)
     # Use hass.async_create_background_task for broad HA version compatibility
@@ -736,3 +783,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await data.ksem_handler.close()
 
     return unload_ok
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Remove the learned battery values of a deleted config entry."""
+    await Store(hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}").async_remove()
