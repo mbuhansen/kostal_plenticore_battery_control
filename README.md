@@ -73,7 +73,7 @@ After setup, **Configure** on the integration holds the grid control options: th
 *   **Charge Start:** Forces the battery to charge at the power defined in "Set Charge Rate", clamped to the maximum battery control power. If Predbat is active this switch runs the Predbat control logic instead — see below.
 *   **Discharge Start:** Forces the battery to discharge at the power defined in "Set Discharge Rate", clamped to the maximum battery control power.
 *   **Block Charge:** Prevents the battery from charging (sets charge rate to 0). Restores the configured rate when turned off.
-*   **Block Discharge:** Prevents the battery from discharging (sets discharge rate to 0). Restores the configured rate when turned off.
+*   **Block Discharge:** Prevents the battery from discharging by holding the inverter's minimum SOC (`1042`) one point above the current SoC. PV can still charge the battery, and the hold moves up with the SoC. Blocking the discharge limit (`1040`) is not used, because the inverter's own standby draw (around 180 W) still comes from the battery that way. If the `Battery Minimum SOC Limit` is higher, that limit is written instead. When turned off, the minimum SOC goes back to the `Battery Minimum SOC Limit`.
 
 *   **Inverter Control** *(only while a grid power entity is configured)*: Trims grid import/export from the external grid entity. See [Grid Control Without a Smart Meter](#grid-control-without-a-smart-meter).
 
@@ -101,12 +101,12 @@ If [Predbat](https://springfall2008.github.io/batpred/) is installed, the `Charg
 While active, `Charge Start` compares the battery SoC against `predbat.best_charge_limit` on every poll:
 
 *   **Charge** — the SoC is at or below `best_charge_limit - 2%`, so the inverter is told to charge at "Set Charge Rate".
-*   **Hold** — the SoC is above the start threshold. The charge setpoint is released and, after a 45 second settling wait, discharge is blocked while the SoC is at or below `best_charge_limit + 1%`, keeping the battery where Predbat wants it.
-*   Above `best_charge_limit + 1%` the inverter is released completely and discharges freely again.
+*   **Hold** — the SoC is above the start threshold. The charge setpoint is released and, after a settling wait of `Modbus timeout + 15s` (45 seconds by default), `best_charge_limit + 1%` is held as the inverter's minimum SOC (`1042`): the battery may discharge down to it and stops there, keeping the battery where Predbat wants it.
+*   Above `best_charge_limit + 1%` the inverter runs its normal self-consumption until the SoC is back at the hold.
 
 The 1-point start band and the 1-point hold band (`PREDBAT_CHARGE_START_DELTA` and `PREDBAT_HOLD_DELTA` in `const.py`) form a 2-point hysteresis window, so the switch does not flip between charging and holding on every poll.
 
-**Reserve hold.** Predbat holds a charge target it has reached by raising `input_number.predbat_reserve` and turning `Charge Start` off. While `Charge Start` is off, no other control switch is on and Predbat is active, a reserve above 5% is treated as a hold request: discharge is blocked while the SoC is at or below the reserve, after the same 45 second settling wait following a stop. Predbat sets the reserve to its target + 1% for a charge hold, the same band as `best_charge_limit + 1%` above, and to the SoC + 1% for `Hold for car`. It is released when the reserve drops back to 5%, the SoC rises above the reserve, or another control switch is turned on. The inverter's own minimum SOC register is not used for this. Predbat only raises the reserve when `switch.predbat_set_reserve_enable` is on, so the integration turns it on whenever Predbat is in an active control mode and it is off.
+**Reserve hold.** Predbat holds a charge target it has reached by raising `input_number.predbat_reserve` and turning `Charge Start` off. While `Charge Start` is off, no other control switch is on and Predbat is active, a reserve above 5% is treated as a hold request: the reserve is written as the inverter's minimum SOC (`1042`), after the same settling wait following a stop. The inverter then stops discharging at the reserve by itself, down to 0 A — blocking `1040` instead would still let the inverter's own standby draw (around 180 W) come from the battery. If the `Battery Minimum SOC Limit` is set higher than the reserve, that limit is written instead. Predbat sets the reserve to its target + 1% for a charge hold, the same band as `best_charge_limit + 1%` above, and to the SoC + 1% for `Hold for car`. It is released when the reserve drops back to 5%, Predbat leaves its active control mode, or a control switch is turned on, and the minimum SOC goes back to the `Battery Minimum SOC Limit`. Predbat only raises the reserve when `switch.predbat_set_reserve_enable` is on, so the integration turns it on whenever Predbat is in an active control mode and it is off.
 
 Two Predbat features are followed automatically:
 
@@ -204,15 +204,21 @@ the battery is doing:
 
 Setting a limit back to `100` (maximum) or `5` (minimum) means "not in use": that value is written once,
 so the release takes effect immediately rather than after the inverter's timeout expires, and nothing is
-sent afterwards.
+sent afterwards. While a discharge hold is active (`Block Discharge` or a Predbat hold), the minimum SOC
+sends the hold's value instead.
 
 Expect the inverter to taper charge/discharge power as the SoC approaches an active limit — that taper
 is the inverter enforcing the limit, and it is what makes "stop charging at 50%" hold.
 
 Writing these registers this often does not wear the inverter: `1042`/`1044` are volatile Modbus process
 values guarded by the timeout, not stored settings — they revert on their own when the writes stop, which
-is exactly why they have to be repeated. Sending the limits does not interfere with the charge/discharge
-switches handing control back to the inverter afterwards.
+is exactly why they have to be repeated.
+
+Every write to the battery registers restarts the inverter's timeout — a setpoint that is no longer
+sent stays in force while a limit is still being written. So after a charge or discharge stops,
+nothing is written for `Modbus timeout + 15s`, the limits included: the inverter lets the stop
+setpoint run out and returns to internal control, and the limits lapse briefly before they are sent
+again. A limit set back to "not in use" during that wait is sent once the wait is over.
 
 The `Battery Minimum SOC` / `Battery Maximum SOC` diagnostic sensors read the registers back if you
 want to watch this happen. Each limit entity also exposes `active` and `writing` attributes.
@@ -292,11 +298,11 @@ KSEM sensors are grouped under their own device, separate from the inverter.
 
 | Status | Meaning |
 |---|---|
-| `Inactive` | Charge Start is off with no reserve hold, or Predbat is not in an active control mode |
+| `Inactive` | Charge Start is off and the SoC is above Predbat's reserve (or there is no reserve hold), or Predbat is not in an active control mode |
 | `Waiting` | Settling after a charge stop, or the SoC / `best_charge_limit` reading is not available yet |
 | `Charge` | SoC is below the start threshold — the inverter is being told to charge |
-| `Hold` | SoC is at the target, also while Charge Start is off and Predbat's reserve asks for a hold — discharge is blocked to hold it there |
-| `Hold for car` | Predbat reported `Hold for car`, so discharge is blocked while the car charges |
+| `Hold` | SoC is at the target — it is held there through the minimum SOC. Also shown while Charge Start is off and the SoC is at or below Predbat's reserve |
+| `Hold for car` | Predbat reported `Hold for car`, so the minimum SOC is held one point above the current SoC while the car charges |
 | `Low Power Suspended` | Low-power charging is capped and the house is exporting, so the setpoint writes are paused |
 
 **Predbat Mode** values: `Not installed`, `Disabled`, `Enabled`.
@@ -358,7 +364,7 @@ affected. Inverters that do implement register `58` never make this request.
     *   **BI:** the nominal AC power from the power class (register `800`): 5500 W for the BI 5.5/26 and 10000 W for the BI 10/26, or `1078` when the power class is unknown.
     *   The `Battery Max Control Power` sensor exposes the observed and documented nominal current, the highest battery voltage seen and the learned battery maximum voltage as attributes.
 *   **Limit Registers:** `1076` / `1078` — Maximum charge/discharge power limits read out from the battery.
-*   **Block Registers:** `1038` / `1040` — Battery max. charge/discharge power limits. Only used for blocking: written to 0 to block, and restored to the battery's own maximum (`1076` / `1078`) afterwards.
+*   **Block Registers:** `1038` / `1040` — Battery max. charge/discharge power limits. `1038` is written to 0 by `Block Charge` and restored to the battery's own maximum (`1076`) afterwards. `1040` is not written: every discharge hold uses the minimum SOC (`1042`) instead, because with `1040 = 0` the inverter's own standby draw (around 180 W) still comes from the battery.
 *   **SOC Limit Registers:** `1042` / `1044` — Minimum/maximum SOC. Only in effect while actively written.
 *   **I/O Output Registers:** `608` / `609` / `610` / `611` — I/O board switched outputs.
 *   **Inverter State Register:** `56` — Inverter state2 as U32. Follows the inverter's Modbus byte-order setting (register `5`), like the float registers do.

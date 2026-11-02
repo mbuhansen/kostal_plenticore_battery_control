@@ -26,6 +26,7 @@ from .const import (
     DEFAULT_UNIT_ID,
     DOMAIN,
     CONF_MODBUS_TIMEOUT,
+    CONTROL_SETTLE_MARGIN_SECONDS,
     DEFAULT_MODBUS_TIMEOUT,
     LOOP_INTERVAL,
     REG_MODBUS_BYTE_ORDER,
@@ -385,6 +386,9 @@ class KostalData:
     # inverter's own limits, i.e. "not in use". The number entities own the
     # register writes — see KostalSocLimitNumber in number.py.
     min_soc: float = DEFAULT_MIN_SOC_LIMIT
+    # Min SOC a discharge hold asks for (Block Discharge or Predbat's reserve
+    # hold), None when no hold is active — see KostalBaseSwitch._hold_discharge_at
+    discharge_hold_min_soc: float | None = None
     max_soc: float = DEFAULT_MAX_SOC_LIMIT
     auto_resume_on_recovery: bool = True
     communication_ok: bool = True
@@ -596,6 +600,28 @@ class KostalData:
         if max_power is None:
             return watts
         return max(-max_power, min(max_power, watts))
+
+    def effective_min_soc(self) -> float:
+        """Min SOC for 1042: the user's limit or a discharge hold, whichever is higher."""
+        if self.discharge_hold_min_soc is None:
+            return self.min_soc
+        return max(self.min_soc, self.discharge_hold_min_soc)
+
+    def control_settle_seconds(self) -> float:
+        """Time the inverter needs without writes to return to internal control."""
+        return self.inverter_timeout + CONTROL_SETTLE_MARGIN_SECONDS
+
+    def control_settle_remaining(self) -> float:
+        """Seconds left of the settling wait after the last charge or discharge stop."""
+        return max(0.0, self.control_settle_seconds() - (time.time() - self.last_stop_time))
+
+    def control_settling(self) -> bool:
+        """True while the inverter settles after the last charge or discharge stop.
+
+        Any write to the battery management registers restarts the inverter's
+        timeout, so keep-alive writes must wait until this is False.
+        """
+        return self.control_settle_remaining() > 0.0
 
     def mark_communication_lost(self, error: str | None) -> None:
         self.communication_ok = False

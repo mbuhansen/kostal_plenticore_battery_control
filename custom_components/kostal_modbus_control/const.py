@@ -35,7 +35,7 @@ REG_INVERTER_STATE = 56       # Inverter state - U32 (0x38)
 REG_BATTERY_AC_POWER_SETPOINT_W = 1026      # Battery charge power (AC) setpoint, absolute (W) - Float (0x402) RW. PLENTICORE BI and (MP) G3 only; used for BI
 REG_BATTERY_DC_POWER_SETPOINT_W = 1034      # Battery charge power (DC) setpoint, absolute (W) - Float (0x40A) RW. Used for hybrid inverters
 REG_BATTERY_MAX_CHARGE_POWER_W = 1038       # Battery max. charge power limit, absolute (W) - Float (0x40E) RW. Written 0 to block charging
-REG_BATTERY_MAX_DISCHARGE_POWER_W = 1040    # Battery max. discharge power limit, absolute (W) - Float (0x410) RW. Written 0 to block discharging
+REG_BATTERY_MAX_DISCHARGE_POWER_W = 1040    # Battery max. discharge power limit, absolute (W) - Float (0x410) RW. Read only; discharge holds use the min SOC (1042)
 REG_BATTERY_MIN_SOC = 1042        # Minimum SOC % - Float (0x412) RW
 REG_BATTERY_MAX_SOC = 1044        # Maximum SOC % - Float (0x414) RW
 
@@ -312,10 +312,12 @@ PREDBAT_ACTIVE_MODES = frozenset({
 # predbat.best_charge_limit.
 PREDBAT_CHARGE_START_DELTA = 1.0
 PREDBAT_HOLD_DELTA = 1.0
-# Seconds to let the inverter return to internal control after a charge stop
-# before forcing the discharge limit (1040) to 0 — blocking too early can also
-# block PV charging.
-PREDBAT_HOLD_SETTLE_SECONDS = 45.0
+# Margin on top of the inverter timeout before anything is written after a
+# charge or discharge stop. Every write to the battery management registers
+# restarts the inverter's external control timeout — a min SOC keep-alive on
+# 1042 kept a stopped 1034 charge running on a G3 — so the inverter only gets
+# back to internal control when nothing is written for the whole timeout.
+CONTROL_SETTLE_MARGIN_SECONDS = 15.0
 # Predbat holds the battery on its reserve while Charge Start is off. Above the
 # reserve's resting value Predbat is asking for a hold at that SOC.
 PREDBAT_RESERVE_ENTITY = "input_number.predbat_reserve"
