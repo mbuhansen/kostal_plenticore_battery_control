@@ -10,7 +10,7 @@ from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfPower
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.event import async_call_later, async_track_time_interval
 
 from .const import (
     DOMAIN,
@@ -201,7 +201,13 @@ class KostalSocLimitNumber(RestoreNumber):
     Setting a limit back to the inverter's own value (min 5%, max 100%) means
     "not in use": that value is written once so the release takes effect
     straight away instead of waiting out the inverter's timeout, and nothing is
-    sent afterwards.
+    sent afterwards. While a discharge hold is active (Block Discharge or a
+    Predbat hold), the min SOC sends the hold's value instead.
+
+    No write is sent while the inverter settles after a charge or discharge
+    stop (KostalData.control_settling): every write restarts the inverter's
+    timeout, and a running keep-alive would keep the stopped setpoint in force.
+    A release made during that wait is sent once the wait is over.
     """
 
     _key: str
@@ -222,6 +228,7 @@ class KostalSocLimitNumber(RestoreNumber):
         self._attr_native_value = self._inactive_value
         self._remove_timer = None
         self._write_task = None
+        self._remove_deferred_write = None
         # Write twice per inverter timeout, same as the charge/discharge loops
         self._loop_interval = max(int(self._data.inverter_timeout / 2), 5)
         self._store_value(self._inactive_value)
@@ -253,6 +260,9 @@ class KostalSocLimitNumber(RestoreNumber):
 
     async def async_will_remove_from_hass(self) -> None:
         self._cancel_timer()
+        if self._remove_deferred_write is not None:
+            self._remove_deferred_write()
+            self._remove_deferred_write = None
         if self._write_task is not None and not self._write_task.done():
             self._write_task.cancel()
         self._write_task = None
@@ -315,12 +325,7 @@ class KostalSocLimitNumber(RestoreNumber):
             return
         self._remove_timer()
         self._remove_timer = None
-        _LOGGER.info(
-            "%s released — register %d set back to %.0f%% and no longer written",
-            self.name,
-            self._register,
-            self._inactive_value,
-        )
+        _LOGGER.info("%s released — register %d no longer written continuously", self.name, self._register)
 
     def _schedule_write(self) -> None:
         if self._write_task is not None and not self._write_task.done():
@@ -334,12 +339,31 @@ class KostalSocLimitNumber(RestoreNumber):
         value = self._attr_native_value
         if value is None:
             return
+        if self._data.control_settling():
+            # A write now would keep a stopped charge/discharge setpoint alive.
+            # An active limit is written by the next tick after the wait. A
+            # release is written once the wait is over: a charge resumed in the
+            # meantime keeps the inverter in external control with the old limit.
+            _LOGGER.debug("%s: write to register %d deferred while the inverter settles", self.name, self._register)
+            if not self._is_active() and self._remove_deferred_write is None:
+                self._remove_deferred_write = async_call_later(
+                    self.hass, self._data.control_settle_remaining() + 1.0, self._async_deferred_write
+                )
+            return
         try:
-            await self._data.handler.write_float(self._register, float(value))
+            await self._data.handler.write_float(self._register, self._register_value(float(value)))
         except Exception as err:
             self._data.mark_communication_lost(f"{self.name}: {err}")
             _LOGGER.warning("%s failed to write register %d: %s", self.name, self._register, err)
             await self._data.handler.close()
+
+    async def _async_deferred_write(self, *args) -> None:
+        self._remove_deferred_write = None
+        await self._async_write_limit()
+
+    def _register_value(self, value: float) -> float:
+        """Value actually written to the register for this limit."""
+        return value
 
 
 class KostalMinSocLimitNumber(KostalSocLimitNumber):
@@ -353,6 +377,11 @@ class KostalMinSocLimitNumber(KostalSocLimitNumber):
     _attr_icon = "mdi:battery-arrow-down-outline"
     _attr_native_min_value = MIN_SOC_LIMIT_RANGE[0]
     _attr_native_max_value = MIN_SOC_LIMIT_RANGE[1]
+
+    def _register_value(self, value: float) -> float:
+        # Block Discharge and Predbat's reserve hold write 1042 as well — send the
+        # same value so the keep-alives never overwrite each other
+        return self._data.effective_min_soc()
 
 
 class KostalMaxSocLimitNumber(KostalSocLimitNumber):

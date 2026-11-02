@@ -28,11 +28,10 @@ from .const import (
     PREDBAT_CHARGE_START_DELTA,
     PREDBAT_HOLD_DELTA,
     REG_BATTERY_MAX_CHARGE_POWER_W,
-    REG_BATTERY_MAX_DISCHARGE_POWER_W,
+    REG_BATTERY_MIN_SOC,
     REG_TOTAL_ACTIVE_POWER,
     REG_BATTERY_POWER,
     REG_BATTERY_MAX_CHARGE_LIMIT,
-    REG_BATTERY_MAX_DISCHARGE_LIMIT,
     REG_CURRENT_PHASE1,
     REG_CURRENT_PHASE2,
     REG_CURRENT_PHASE3,
@@ -56,7 +55,6 @@ from .const import (
     PREDBAT_LOW_POWER_SUSPEND_DELAY_SECONDS,
     PREDBAT_LOW_POWER_RESUME_TOLERANCE_FRACTION,
     PREDBAT_LOW_POWER_RESUME_TOLERANCE_FRACTION_BI,
-    PREDBAT_HOLD_SETTLE_SECONDS,
     PREDBAT_RESERVE_ENTITY,
     PREDBAT_RESERVE_INACTIVE_PERCENT,
     PREDBAT_SET_RESERVE_ENTITY,
@@ -164,8 +162,8 @@ class KostalBaseSwitch(SwitchEntity):
         # Calculate derived timings
         # Loop interval = Inverter Timeout / 2 (send twice per timeout period)
         self._loop_interval = max(int(self._data.inverter_timeout / 2), 5)
-        # Wait time = Inverter Timeout + X (e.g., 15s safety buffer)
-        self._wait_time_before_start = self._data.inverter_timeout + 15.0
+        # Wait time = Inverter Timeout + safety buffer
+        self._wait_time_before_start = self._data.control_settle_seconds()
         self._action_timeout = max(self._wait_time_before_start, 30.0)
 
         self._data.register_runtime_switch(self)
@@ -395,13 +393,6 @@ class KostalBaseSwitch(SwitchEntity):
         await self._run_stop_action()
         self.async_write_ha_state()
 
-    def _max_discharge_watts(self) -> float:
-        """Read battery's own max discharge limit from register 1078."""
-        coordinator = self._data.coordinator
-        if coordinator is not None and coordinator.data is not None:
-            return coordinator.data.get(REG_BATTERY_MAX_DISCHARGE_LIMIT) or 0.0
-        return 0.0
-
     def _max_charge_watts(self) -> float:
         """Read battery's own max charge limit from register 1076."""
         coordinator = self._data.coordinator
@@ -409,24 +400,32 @@ class KostalBaseSwitch(SwitchEntity):
             return coordinator.data.get(REG_BATTERY_MAX_CHARGE_LIMIT) or 0.0
         return 0.0
 
-    def _current_discharge_limit_watts(self) -> float:
-        """Read the currently applied discharge limit from register 1040."""
+    def _battery_soc(self) -> float | None:
+        """Read the battery SOC in percent from register 210."""
         coordinator = self._data.coordinator
-        if coordinator is not None and coordinator.data is not None:
-            return coordinator.data.get(REG_BATTERY_MAX_DISCHARGE_POWER_W) or 0.0
-        return 0.0
+        if coordinator is None or coordinator.data is None:
+            return None
+        return coordinator.data.get(REG_BATTERY_SOC)
 
-    async def _restore_max_discharge_limit(self) -> bool:
-        """Restore register 1040 to the battery's current maximum discharge limit."""
-        max_discharge_watts = self._max_discharge_watts()
-        if max_discharge_watts <= 0.0:
-            _LOGGER.warning(
-                "Predbat Control: cannot restore discharge limit because max discharge is unavailable"
-            )
-            return False
+    async def _hold_discharge_at(self, soc_percent: float) -> None:
+        """Stop discharging at soc_percent by writing it as the inverter's min SOC (1042).
 
-        await self._data.handler.write_float(REG_BATTERY_MAX_DISCHARGE_POWER_W, max_discharge_watts)
-        return True
+        Used instead of blocking 1040: since the firmware of October 2026, 1040 = 0
+        still lets the inverter's own ~180 W standby draw come from the battery,
+        while a min SOC at or above the SoC stops discharge at 0 A. Charging is not
+        affected. Must be written continuously, like every battery register.
+        """
+        self._data.discharge_hold_min_soc = soc_percent
+        await self._data.handler.write_float(REG_BATTERY_MIN_SOC, self._data.effective_min_soc())
+
+    async def _release_discharge_hold(self) -> None:
+        """Hand 1042 back to the Battery Minimum SOC Limit (5 % when it is not in use).
+
+        One write so the release takes effect at once; the min SOC number keeps
+        writing its own limit if one is set.
+        """
+        self._data.discharge_hold_min_soc = None
+        await self._data.handler.write_float(REG_BATTERY_MIN_SOC, self._data.effective_min_soc())
 
     async def _write_power_setpoint(self, watts: float) -> None:
         """Write a signed battery power setpoint in Watts (negative = charge).
@@ -514,7 +513,6 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
     def __init__(self, data, entry_id):
         super().__init__(data, entry_id)
         self._predbat_was_charging: bool | None = None
-        self._predbat_transition_time: float | None = None
         self._predbat_startup_block_until: float | None = None
         self._predbat_discharge_blocked: bool = False
         self._predbat_low_power_capping: bool = False
@@ -570,18 +568,12 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         except (ValueError, TypeError):
             return None
 
-    def _battery_soc(self) -> float | None:
-        coordinator = self._data.coordinator
-        if coordinator is None or coordinator.data is None:
-            return None
-        return coordinator.data.get(REG_BATTERY_SOC)
-
     async def _async_reserve_hold_tick(self, *args) -> None:
         """While Charge Start is off, hold the battery on Predbat's reserve.
 
         Predbat holds a reached charge target by raising its reserve and turning
         Charge Start off. Above its resting value the reserve is a hold request:
-        block discharge (1040 = 0) while SOC is at or below it.
+        hold the min SOC at it — see _hold_discharge_at.
         """
         if self._attr_is_on or self._reserve_hold_lock.locked():
             return
@@ -597,7 +589,8 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         if self._attr_is_on:
             return
         # Predbat sets the reserve to target + 1 for a charge hold (the same band as
-        # best_charge_limit + PREDBAT_HOLD_DELTA above) and to SOC + 1 for a car hold
+        # best_charge_limit + PREDBAT_HOLD_DELTA above) and to SOC + 1 for a car hold.
+        # The reserve is held through the inverter's min SOC — see _hold_discharge_at.
         reserve = self._predbat_reserve_percent()
         soc = self._battery_soc()
         other_switch_on = any(switch is not self and switch.is_on for switch in self._related_switches)
@@ -605,36 +598,27 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
             self._is_predbat_active()
             and not other_switch_on
             and reserve is not None
-            and soc is not None
             and reserve >= PREDBAT_RESERVE_INACTIVE_PERCENT + 0.5
-            and soc <= reserve
         )
+        if self._data.control_settling():
+            # Holding or releasing now would restart the inverter's timeout
+            _LOGGER.debug("Predbat reserve hold: waiting for the inverter to settle after the last stop")
+            return
         if not should_hold:
             await self._release_reserve_hold()
             return
-        assert soc is not None and reserve is not None
-
-        if time.time() - self._data.last_stop_time < PREDBAT_HOLD_SETTLE_SECONDS:
-            _LOGGER.debug("Predbat reserve hold: waiting for the inverter to settle after the last stop")
-            return
+        assert reserve is not None
 
         hold_status = "Hold for car" if self._predbat_car_hold_active() else "Hold"
-        if not self._reserve_holding:
-            _LOGGER.info(
-                "Predbat reserve hold: SOC=%.1f%% <= reserve=%.1f%% — blocking discharge (%s)",
-                soc,
-                reserve,
-                hold_status,
-            )
-            self._write_activity(
-                f"Predbat {hold_status.lower()}: blocking discharge because SOC={soc:.1f}% <= reserve {reserve:.1f}%"
-            )
+        if not self._reserve_holding or self._data.discharge_hold_min_soc != reserve:
+            _LOGGER.info("Predbat reserve hold: min SOC set to reserve %.1f%% (%s)", reserve, hold_status)
+            self._write_activity(f"Predbat {hold_status.lower()}: min SOC set to reserve {reserve:.1f}%")
             self._reserve_holding = True
-        self._set_predbat_status(hold_status)
-        await self._data.handler.write_float(REG_BATTERY_MAX_DISCHARGE_POWER_W, 0.0)
+        self._set_predbat_status(hold_status if soc is not None and soc <= reserve else "Inactive")
+        await self._hold_discharge_at(reserve)
 
     async def _release_reserve_hold(self) -> None:
-        """Restore free discharge if the reserve hold blocked it. Caller holds the lock."""
+        """Hand the min SOC back to the user's limit if the reserve hold set it. Caller holds the lock."""
         if not self._reserve_holding:
             return
         self._reserve_holding = False
@@ -642,7 +626,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         self._write_activity("Predbat hold: releasing inverter")
         if not self._attr_is_on:
             self._set_predbat_status("Inactive")
-        await self._restore_max_discharge_limit()
+        await self._release_discharge_hold()
 
     async def async_release_background_hold(self) -> None:
         async with self._reserve_hold_lock:
@@ -858,12 +842,8 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         return stop_setpoint_watts
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        async with self._reserve_hold_lock:
-            if self._reserve_holding:
-                # Hand the blocked 1040 over to the charge loop, which restores it
-                # when it charges or leaves its own hold
-                self._reserve_holding = False
-                self._predbat_discharge_blocked = True
+        # The charge loop has its own hold, so the reserve's min SOC is handed back
+        await self.async_release_background_hold()
         if self._is_predbat_active():
             # self._predbat_startup_block_until = time.time() + 15.0
             self._predbat_startup_block_until = None
@@ -925,7 +905,6 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                 )
                 # Power setpoint not written — no transition wait needed
                 self._predbat_was_charging = False
-                self._predbat_transition_time = None
                 self._set_predbat_status("Waiting")
             elif should_charge_now:
                 _LOGGER.info(
@@ -937,7 +916,6 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                     f"Predbat startup: charge because SOC={soc:.1f}% <= start limit {charge_start_limit:.1f}%"
                 )
                 self._predbat_was_charging = True
-                self._predbat_transition_time = None
                 self._set_predbat_status("Charge")
             else:
                 car_hold = self._predbat_car_hold_active()
@@ -952,7 +930,6 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                 )
                 # Power setpoint not written — inverter already in internal control, go directly to hold
                 self._predbat_was_charging = False
-                self._predbat_transition_time = None
                 self._set_predbat_status("Hold for car" if car_hold else "Hold")
 
             if not await self._run_guarded_action(self._loop_action, "initial predbat loop"):
@@ -972,6 +949,13 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         else:
             self._set_predbat_status("Inactive")
             # Normal charge — no Predbat Control
+            if self._predbat_discharge_blocked:
+                # Predbat left its active mode during a hold
+                self._predbat_discharge_blocked = False
+                await self._release_discharge_hold()
+            # A setpoint is in force now: if Predbat becomes active, its first
+            # tick must go through the charge stop and the settling wait
+            self._predbat_was_charging = True
             await self._write_power_setpoint(-self._charge_target_watts())
 
     def _charge_target_watts(self) -> float:
@@ -1014,11 +998,10 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                     soc,
                     charge_start_limit,
                 )
-                self._predbat_transition_time = None
                 self._predbat_was_charging = True
-            if self._predbat_discharge_blocked or self._current_discharge_limit_watts() <= 0.0:
-                if await self._restore_max_discharge_limit():
-                    self._predbat_discharge_blocked = False
+            if self._predbat_discharge_blocked:
+                self._predbat_discharge_blocked = False
+                await self._release_discharge_hold()
             charge_watts = self._charge_target_watts()
             low_power_watts = self._predbat_low_power_charge_watts()
             if low_power_watts is not None and low_power_watts < charge_watts:
@@ -1056,7 +1039,6 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         if self._predbat_was_charging is None:
             # Power setpoint was never written in this session — no transition wait needed
             self._predbat_was_charging = False
-            self._predbat_transition_time = None
 
         self._predbat_low_power_suspended = False
         self._predbat_low_power_export_since = None
@@ -1064,29 +1046,29 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         # Not charging
         if self._predbat_was_charging is True:
             # Transition: charging just stopped.
-            # Write either 0 or a signed stop setpoint, then keep the normal 45s wait
-            # before the hold evaluation and any discharge block on 1040.
+            # Write either 0 or a signed stop setpoint, then wait for the inverter
+            # timeout before the hold evaluation and the min SOC hold.
             _LOGGER.info(
-                "Predbat Control: SOC=%.1f%% >= hold_limit=%.1f%% — waiting 45s before hold evaluation",
+                "Predbat Control: SOC=%.1f%% >= hold_limit=%.1f%% — waiting for the inverter timeout before hold evaluation",
                 soc,
                 hold_limit,
             )
             self._write_activity(
-                f"Predbat waiting 45s: SOC={soc:.1f}% >= hold limit {hold_limit:.1f}%"
+                f"Predbat waiting for the inverter timeout: SOC={soc:.1f}% >= hold limit {hold_limit:.1f}%"
             )
             self._set_predbat_status("Waiting")
             await self._write_power_setpoint(self._predbat_charge_stop_watts())
-            self._predbat_transition_time = time.time()
+            # Pause keep-alive writes (e.g. the min SOC limit) so the stop setpoint can time out
+            self._data.last_stop_time = time.time()
             self._predbat_was_charging = False
             return
 
-        # Check 45s wait after charge stopped
-        elapsed = time.time() - (self._predbat_transition_time or 0.0)
-        if elapsed < PREDBAT_HOLD_SETTLE_SECONDS:
+        # Wait for the inverter timeout after charge stopped
+        if self._data.control_settling():
             self._set_predbat_status("Waiting")
-            # Let the inverter return to internal control before forcing 1040 to 0.
-            # Blocking discharge too early here can also block PV charging.
-            _LOGGER.debug("Predbat Control: %.0fs remaining before SOC check", PREDBAT_HOLD_SETTLE_SECONDS - elapsed)
+            # Let the inverter return to internal control before the min SOC hold —
+            # writing it now would keep the charge stop setpoint alive.
+            _LOGGER.debug("Predbat Control: %.0fs remaining before SOC check", self._data.control_settle_remaining())
             return
 
         # Final guard before SOC comparison — Charge Start is master switch
@@ -1096,55 +1078,54 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         car_hold = self._predbat_car_hold_active()
         hold_status = "Hold for car" if car_hold else "Hold"
         self._set_predbat_status(hold_status)
-        if car_hold or soc <= hold_limit:
-            # At/below hold limit — block discharge
-            if not self._predbat_discharge_blocked:
-                _LOGGER.info(
-                    "Predbat Control: SOC=%.1f%% <= hold_limit=%.1f%% — blocking discharge (%s)",
-                    soc, hold_limit, hold_status,
-                )
-                self._write_activity(
-                    f"Predbat {hold_status.lower()}: blocking discharge because SOC={soc:.1f}% <= hold limit {hold_limit:.1f}%"
-                )
-                self._predbat_discharge_blocked = True
-            await self._data.handler.write_float(REG_BATTERY_MAX_DISCHARGE_POWER_W, 0.0)
-        else:
-            # Above hold limit — restore free discharge if 1040 was previously forced to zero.
-            discharge_limit_is_blocked = self._current_discharge_limit_watts() <= 0.0
-            if self._predbat_discharge_blocked or discharge_limit_is_blocked:
-                _LOGGER.info(
-                    "Predbat Control: SOC=%.1f%% > hold_limit=%.1f%% — releasing inverter",
-                    soc, hold_limit,
-                )
-                self._write_activity(
-                    f"Predbat hold: releasing inverter because SOC={soc:.1f}% > hold limit {hold_limit:.1f}%"
-                )
-                if await self._restore_max_discharge_limit():
-                    self._predbat_discharge_blocked = False
+        # Discharge down to the hold limit and stop there; a car hold stops at the current SoC
+        hold_soc = min(soc + 1.0, 100.0) if car_hold else hold_limit
+        if not self._predbat_discharge_blocked or self._data.discharge_hold_min_soc != hold_soc:
+            _LOGGER.info(
+                "Predbat Control: SOC=%.1f%% — min SOC held at %.1f%% (%s)",
+                soc, hold_soc, hold_status,
+            )
+            self._write_activity(
+                f"Predbat {hold_status.lower()}: min SOC held at {hold_soc:.1f}% (SOC={soc:.1f}%)"
+            )
+            self._predbat_discharge_blocked = True
+        await self._hold_discharge_at(hold_soc)
 
     async def _stop_action(self):
         # Only write a signed stop setpoint if we were actually charging.
         # In predbat hold mode (_predbat_was_charging is False), that stop
         # setpoint was already written when Predbat switched from charge to hold.
         # In normal mode (predbat switch OFF), we always write it here.
-        if not self._is_predbat_active() or self._predbat_was_charging is True:
-            # Always use live power balance on manual stop — the 0.0 hold-transition
-            # setpoint only makes sense when charge completes naturally in _predbat_loop_action.
-            await self._write_power_setpoint(self._stop_setpoint_watts_from_active_power())
-        self._data.last_stop_time = time.time()
-        self._set_predbat_status("Inactive")
-        if self._predbat_discharge_blocked:
+        write_stop_setpoint = not self._is_predbat_active() or self._predbat_was_charging is True
+        release_hold = self._predbat_discharge_blocked
+        # The reserve hold waits for the lock, so it cannot hold in between and
+        # then lose its hold to the release below
+        async with self._reserve_hold_lock:
+            # State first, so a failed write leaves no stale hold behind
+            if write_stop_setpoint:
+                # Start the settling wait before the write: a keep-alive in between
+                # would otherwise restart the inverter timeout
+                self._data.last_stop_time = time.time()
+            self._set_predbat_status("Inactive")
             self._predbat_discharge_blocked = False
-            await self._restore_max_discharge_limit()
-        self._predbat_was_charging = None
-        self._predbat_transition_time = None
-        self._predbat_startup_block_until = None
-        self._predbat_low_power_capping = False
-        self._predbat_low_power_suspended = False
-        self._predbat_low_power_export_since = None
-        # Close the Modbus connection so the inverter sees a clean disconnect.
-        # It will reconnect automatically on the next read/write.
-        await self._data.handler.close()
+            if release_hold:
+                self._data.discharge_hold_min_soc = None
+            self._predbat_was_charging = None
+            self._predbat_startup_block_until = None
+            self._predbat_low_power_capping = False
+            self._predbat_low_power_suspended = False
+            self._predbat_low_power_export_since = None
+            if write_stop_setpoint:
+                # Always use live power balance on manual stop — the 0.0 hold-transition
+                # setpoint only makes sense when charge completes naturally in _predbat_loop_action.
+                await self._write_power_setpoint(self._stop_setpoint_watts_from_active_power())
+            if release_hold:
+                await self._release_discharge_hold()
+            # Close the Modbus connection so the inverter sees a clean disconnect.
+            # It will reconnect automatically on the next read/write.
+            await self._data.handler.close()
+        # Let the reserve hold take over now rather than on its next tick
+        await self._async_reserve_hold_tick()
 
     def _on_communication_fault(self) -> None:
         self._set_predbat_status("Inactive")
@@ -1177,13 +1158,20 @@ class KostalBlockDischargeSwitch(KostalBaseSwitch):
     async def _loop_action(self, *args):
         if not self._attr_is_on:
             return
-        # Write discharge rate 0 to Block Discharge (1040)
-        # MUST BE POSITIVE (0 is positive)
-        await self._data.handler.write_float(REG_BATTERY_MAX_DISCHARGE_POWER_W, 0.0)
+        # Hold one point above the current SoC, so PV can still charge and the hold
+        # moves up with it. Without a SoC reading, keep the last hold.
+        soc = self._battery_soc()
+        hold = self._data.discharge_hold_min_soc
+        if soc is not None:
+            hold = min(soc + 1.0, 100.0)
+        if hold is None:
+            _LOGGER.warning("Block Discharge: no SOC reading yet — discharge not blocked")
+            return
+        await self._hold_discharge_at(hold)
 
     async def _stop_action(self):
-        self._data.last_stop_time = time.time()
-        await self._data.handler.write_float(REG_BATTERY_MAX_DISCHARGE_POWER_W, self._max_discharge_watts())
+        # No settling wait: only a stopped 1034 setpoint needs one
+        await self._release_discharge_hold()
         await self._data.handler.close()
 
 class KostalBlockChargeSwitch(KostalBaseSwitch):
@@ -1199,7 +1187,7 @@ class KostalBlockChargeSwitch(KostalBaseSwitch):
         await self._data.handler.write_float(REG_BATTERY_MAX_CHARGE_POWER_W, 0.0)
 
     async def _stop_action(self):
-        self._data.last_stop_time = time.time()
+        # No settling wait: only a stopped 1034 setpoint needs one
         await self._data.handler.write_float(REG_BATTERY_MAX_CHARGE_POWER_W, self._max_charge_watts())
         await self._data.handler.close()
 
