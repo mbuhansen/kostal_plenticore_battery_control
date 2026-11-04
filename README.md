@@ -64,7 +64,9 @@ In the first two modes the inverter **silently ignores** every write — the swi
 6.  If the inverter reports a **KOSTAL Smart Energy Meter** as its connected meter (sensor type `0x03`), a second step offers to add the KSEM's IP address. This is optional — leave it empty to skip. With it configured, the integration opens a second Modbus connection to the KSEM (port `502`, unit ID `1`) and adds the energy and power-flow sensors listed below.
 7.  If the inverter reports **no smart meter** (sensor type `0xFF`, or the register cannot be read), a step offers to pick a Home Assistant **grid power entity** instead. This is optional — leave it empty to skip, and the charge/discharge switches work as usual. See [Grid Control Without a Smart Meter](#grid-control-without-a-smart-meter).
 
-After setup, **Configure** on the integration holds the grid control options: the grid power entity and its tuning values. Everything else is controlled through entities.
+After setup, **Configure** on the integration holds the discharge hold offset and the grid control options (the grid power entity and its tuning values). Saved options take effect straight away, without a reload. Everything else is controlled through entities.
+
+**Discharge hold SOC offset** (0–10%, 0% by default, which leaves the holds as described below) is added on top of every discharge hold's minimum SOC: Predbat's reserve hold (reserve + offset), the Predbat hold in `Charge Start` (`best_charge_limit + 1%` + offset), `Hold for car` and `Block Discharge` (SoC + 1% + offset). With the minimum SOC right at the SoC, the SoC the BMS reports can rise one point once the battery stops; the inverter then sees the SoC above the minimum and starts discharging again for a few minutes before it stops. Raising the offset keeps the minimum SOC above that rebound.
 
 ## Entities Explained
 
@@ -73,7 +75,7 @@ After setup, **Configure** on the integration holds the grid control options: th
 *   **Charge Start:** Forces the battery to charge at the power defined in "Set Charge Rate", clamped to the maximum battery control power. If Predbat is active this switch runs the Predbat control logic instead — see below.
 *   **Discharge Start:** Forces the battery to discharge at the power defined in "Set Discharge Rate", clamped to the maximum battery control power.
 *   **Block Charge:** Prevents the battery from charging (sets charge rate to 0). Restores the configured rate when turned off.
-*   **Block Discharge:** Prevents the battery from discharging by holding the inverter's minimum SOC (`1042`) one point above the current SoC. PV can still charge the battery, and the hold moves up with the SoC. Blocking the discharge limit (`1040`) is not used, because the inverter's own standby draw (around 180 W) still comes from the battery that way. If the `Battery Minimum SOC Limit` is higher, that limit is written instead. When turned off, the minimum SOC goes back to the `Battery Minimum SOC Limit`.
+*   **Block Discharge:** Prevents the battery from discharging by holding the inverter's minimum SOC (`1042`) one point above the current SoC, plus the discharge hold SOC offset. PV can still charge the battery, and the hold moves up with the SoC. Blocking the discharge limit (`1040`) is not used, because the inverter's own standby draw (around 180 W) still comes from the battery that way. If the `Battery Minimum SOC Limit` is higher, that limit is written instead. When turned off, the minimum SOC goes back to the `Battery Minimum SOC Limit`.
 
 *   **Inverter Control** *(only while a grid power entity is configured)*: Trims grid import/export from the external grid entity. See [Grid Control Without a Smart Meter](#grid-control-without-a-smart-meter).
 
@@ -101,12 +103,12 @@ If [Predbat](https://springfall2008.github.io/batpred/) is installed, the `Charg
 While active, `Charge Start` compares the battery SoC against `predbat.best_charge_limit` on every poll:
 
 *   **Charge** — the SoC is at or below `best_charge_limit - 2%`, so the inverter is told to charge at "Set Charge Rate".
-*   **Hold** — the SoC is above the start threshold. The charge setpoint is released and, after a settling wait of `Modbus timeout + 15s` (45 seconds by default), `best_charge_limit + 1%` is held as the inverter's minimum SOC (`1042`): the battery may discharge down to it and stops there, keeping the battery where Predbat wants it.
-*   Above `best_charge_limit + 1%` the inverter runs its normal self-consumption until the SoC is back at the hold.
+*   **Hold** — the SoC is above the start threshold. The charge setpoint is released and, after a settling wait of `Modbus timeout + 15s` (45 seconds by default), `best_charge_limit + 1%` + the discharge hold SOC offset is held as the inverter's minimum SOC (`1042`): the battery may discharge down to it and stops there, keeping the battery where Predbat wants it.
+*   Above that hold the inverter runs its normal self-consumption until the SoC is back at the hold.
 
 The 1-point start band and the 1-point hold band (`PREDBAT_CHARGE_START_DELTA` and `PREDBAT_HOLD_DELTA` in `const.py`) form a 2-point hysteresis window, so the switch does not flip between charging and holding on every poll.
 
-**Reserve hold.** Predbat holds a charge target it has reached by raising `input_number.predbat_reserve` and turning `Charge Start` off. While `Charge Start` is off, no other control switch is on and Predbat is active, a reserve above 5% is treated as a hold request: the reserve is written as the inverter's minimum SOC (`1042`), after the same settling wait following a stop. The inverter then stops discharging at the reserve by itself, down to 0 A — blocking `1040` instead would still let the inverter's own standby draw (around 180 W) come from the battery. If the `Battery Minimum SOC Limit` is set higher than the reserve, that limit is written instead. Predbat sets the reserve to its target + 1% for a charge hold, the same band as `best_charge_limit + 1%` above, and to the SoC + 1% for `Hold for car`. It is released when the reserve drops back to 5%, Predbat leaves its active control mode, or a control switch is turned on, and the minimum SOC goes back to the `Battery Minimum SOC Limit`. Predbat only raises the reserve when `switch.predbat_set_reserve_enable` is on, so the integration turns it on whenever Predbat is in an active control mode and it is off.
+**Reserve hold.** Predbat holds a charge target it has reached by raising `input_number.predbat_reserve` and turning `Charge Start` off. While `Charge Start` is off, no other control switch is on and Predbat is active, a reserve above 5% is treated as a hold request: the reserve + the discharge hold SOC offset is written as the inverter's minimum SOC (`1042`), after the same settling wait following a stop. The inverter then stops discharging at that SOC by itself, down to 0 A — blocking `1040` instead would still let the inverter's own standby draw (around 180 W) come from the battery. If the `Battery Minimum SOC Limit` is set higher, that limit is written instead. Predbat sets the reserve to its target + 1% for a charge hold, the same band as `best_charge_limit + 1%` above, and to the SoC + 1% for `Hold for car`. It is released when the reserve drops back to 5%, Predbat leaves its active control mode, or a control switch is turned on, and the minimum SOC goes back to the `Battery Minimum SOC Limit`. Predbat only raises the reserve when `switch.predbat_set_reserve_enable` is on, so the integration turns it on whenever Predbat is in an active control mode and it is off.
 
 Two Predbat features are followed automatically:
 
@@ -302,7 +304,7 @@ KSEM sensors are grouped under their own device, separate from the inverter.
 | `Waiting` | Settling after a charge stop, or the SoC / `best_charge_limit` reading is not available yet |
 | `Charge` | SoC is below the start threshold — the inverter is being told to charge |
 | `Hold` | SoC is at the target — it is held there through the minimum SOC. Also shown while Charge Start is off and the SoC is at or below Predbat's reserve |
-| `Hold for car` | Predbat reported `Hold for car`, so the minimum SOC is held one point above the current SoC while the car charges |
+| `Hold for car` | Predbat reported `Hold for car`, so the minimum SOC is held one point above the current SoC, plus the discharge hold SOC offset, while the car charges |
 | `Low Power Suspended` | Low-power charging is capped and the house is exporting, so the setpoint writes are paused |
 
 **Predbat Mode** values: `Not installed`, `Disabled`, `Enabled`.

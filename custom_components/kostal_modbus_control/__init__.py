@@ -80,6 +80,9 @@ from .const import (
     REG_BATTERY_MAX_SOC,
     DEFAULT_MIN_SOC_LIMIT,
     DEFAULT_MAX_SOC_LIMIT,
+    DEFAULT_HOLD_SOC_OFFSET,
+    HOLD_SOC_OFFSET_RANGE,
+    CONF_HOLD_SOC_OFFSET,
     POWER_RATE_FALLBACK_MAX_W,
     POWER_RATE_STEP_W,
     REG_CURRENT_PHASE1,
@@ -389,6 +392,8 @@ class KostalData:
     # Min SOC a discharge hold asks for (Block Discharge or Predbat's reserve
     # hold), None when no hold is active — see KostalBaseSwitch._hold_discharge_at
     discharge_hold_min_soc: float | None = None
+    # Points added on top of every discharge hold's SOC (options flow) — see hold_min_soc
+    hold_soc_offset: float = DEFAULT_HOLD_SOC_OFFSET
     max_soc: float = DEFAULT_MAX_SOC_LIMIT
     auto_resume_on_recovery: bool = True
     communication_ok: bool = True
@@ -601,6 +606,10 @@ class KostalData:
             return watts
         return max(-max_power, min(max_power, watts))
 
+    def hold_min_soc(self, soc_percent: float) -> float:
+        """Min SOC a discharge hold at soc_percent writes: soc_percent + the hold offset, at most 100 %."""
+        return min(100.0, soc_percent + self.hold_soc_offset)
+
     def effective_min_soc(self) -> float:
         """Min SOC for 1042: the user's limit or a discharge hold, whichever is higher."""
         if self.discharge_hold_min_soc is None:
@@ -760,6 +769,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     data.coordinator = coordinator
     _apply_grid_control_options(entry.options, data)
+    _apply_hold_options(entry.options, data)
 
     hass.data[DOMAIN][entry.entry_id] = data
 
@@ -783,6 +793,13 @@ async def _async_options_update_listener(hass: HomeAssistant, entry: ConfigEntry
         await hass.config_entries.async_reload(entry.entry_id)
         return
     _apply_grid_control_options(entry.options, data)
+    _apply_hold_options(entry.options, data)
+
+
+def _apply_hold_options(options: Any, data: KostalData) -> None:
+    """Copy the discharge hold offset to the runtime data; the holds use it on their next write."""
+    offset = float(options.get(CONF_HOLD_SOC_OFFSET, DEFAULT_HOLD_SOC_OFFSET))
+    data.hold_soc_offset = min(HOLD_SOC_OFFSET_RANGE[1], max(HOLD_SOC_OFFSET_RANGE[0], offset))
 
 
 def _apply_grid_control_options(options: Any, data: KostalData) -> None:

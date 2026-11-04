@@ -363,6 +363,7 @@ NUMBER_DISCHARGE_RATE = "discharge_rate"
 NUMBER_FUSE_SIZE = "fuse_size"
 NUMBER_MIN_SOC_LIMIT = "min_soc_limit"
 NUMBER_MAX_SOC_LIMIT = "max_soc_limit"
+CONF_HOLD_SOC_OFFSET = "hold_soc_offset"
 
 # Defaults
 # Charge/discharge rates in Watts. A rate follows the maximum battery control
@@ -386,6 +387,14 @@ MIN_SOC_LIMIT_RANGE = (5.0, 100.0)
 MAX_SOC_LIMIT_RANGE = (5.0, 100.0)
 DEFAULT_MIN_SOC_LIMIT = MIN_SOC_LIMIT_RANGE[0]
 DEFAULT_MAX_SOC_LIMIT = MAX_SOC_LIMIT_RANGE[1]
+
+# Points added on top of a discharge hold's SOC (Predbat's reserve, the Predbat
+# hold limit, or SoC + 1 for Block Discharge and Hold for car). With the min SOC
+# exactly at the SoC, the SoC the BMS reports can rebound one point once the
+# battery stops, so the inverter starts discharging again for a moment.
+# 0 keeps the holds as they are.
+HOLD_SOC_OFFSET_RANGE = (0.0, 10.0)
+DEFAULT_HOLD_SOC_OFFSET = 0.0
 
 # EMS settings
 EMS_SAFETY_MARGIN = 0.90   # Trigger at 90% of fuse size

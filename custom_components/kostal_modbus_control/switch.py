@@ -610,12 +610,20 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         assert reserve is not None
 
         hold_status = "Hold for car" if self._predbat_car_hold_active() else "Hold"
-        if not self._reserve_holding or self._data.discharge_hold_min_soc != reserve:
-            _LOGGER.info("Predbat reserve hold: min SOC set to reserve %.1f%% (%s)", reserve, hold_status)
-            self._write_activity(f"Predbat {hold_status.lower()}: min SOC set to reserve {reserve:.1f}%")
+        # The offset keeps the min SOC above the SoC the BMS reports once the battery
+        # stops, so a one-point rebound cannot start the inverter again
+        hold_soc = self._data.hold_min_soc(reserve)
+        if not self._reserve_holding or self._data.discharge_hold_min_soc != hold_soc:
+            _LOGGER.info(
+                "Predbat reserve hold: min SOC set to %.1f%% (reserve %.1f%% + offset, %s)",
+                hold_soc, reserve, hold_status,
+            )
+            self._write_activity(
+                f"Predbat {hold_status.lower()}: min SOC set to {hold_soc:.1f}% (reserve {reserve:.1f}%)"
+            )
             self._reserve_holding = True
-        self._set_predbat_status(hold_status if soc is not None and soc <= reserve else "Inactive")
-        await self._hold_discharge_at(reserve)
+        self._set_predbat_status(hold_status if soc is not None and soc <= hold_soc else "Inactive")
+        await self._hold_discharge_at(hold_soc)
 
     async def _release_reserve_hold(self) -> None:
         """Hand the min SOC back to the user's limit if the reserve hold set it. Caller holds the lock."""
@@ -1078,8 +1086,9 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         car_hold = self._predbat_car_hold_active()
         hold_status = "Hold for car" if car_hold else "Hold"
         self._set_predbat_status(hold_status)
-        # Discharge down to the hold limit and stop there; a car hold stops at the current SoC
-        hold_soc = min(soc + 1.0, 100.0) if car_hold else hold_limit
+        # Discharge down to the hold limit and stop there; a car hold stops one point
+        # above the current SoC. Both get the hold offset on top, like the reserve hold.
+        hold_soc = self._data.hold_min_soc(soc + 1.0 if car_hold else hold_limit)
         if not self._predbat_discharge_blocked or self._data.discharge_hold_min_soc != hold_soc:
             _LOGGER.info(
                 "Predbat Control: SOC=%.1f%% — min SOC held at %.1f%% (%s)",
@@ -1158,12 +1167,12 @@ class KostalBlockDischargeSwitch(KostalBaseSwitch):
     async def _loop_action(self, *args):
         if not self._attr_is_on:
             return
-        # Hold one point above the current SoC, so PV can still charge and the hold
-        # moves up with it. Without a SoC reading, keep the last hold.
+        # Hold one point (plus the hold offset) above the current SoC, so PV can still
+        # charge and the hold moves up with it. Without a SoC reading, keep the last hold.
         soc = self._battery_soc()
         hold = self._data.discharge_hold_min_soc
         if soc is not None:
-            hold = min(soc + 1.0, 100.0)
+            hold = self._data.hold_min_soc(soc + 1.0)
         if hold is None:
             _LOGGER.warning("Block Discharge: no SOC reading yet — discharge not blocked")
             return
