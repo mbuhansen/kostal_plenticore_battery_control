@@ -83,6 +83,8 @@ from .const import (
     DEFAULT_HOLD_SOC_OFFSET,
     HOLD_SOC_OFFSET_RANGE,
     CONF_HOLD_SOC_OFFSET,
+    CONF_HOLD_USE_DISCHARGE_LIMIT,
+    DEFAULT_HOLD_USE_DISCHARGE_LIMIT,
     POWER_RATE_FALLBACK_MAX_W,
     POWER_RATE_STEP_W,
     REG_CURRENT_PHASE1,
@@ -394,6 +396,10 @@ class KostalData:
     discharge_hold_min_soc: float | None = None
     # Points added on top of every discharge hold's SOC (options flow) — see hold_min_soc
     hold_soc_offset: float = DEFAULT_HOLD_SOC_OFFSET
+    # Holds block 1040 instead of writing 1042 (options flow)
+    hold_use_discharge_limit: bool = DEFAULT_HOLD_USE_DISCHARGE_LIMIT
+    # A hold has written 1040 = 0 and it has not been restored yet
+    discharge_limit_blocked: bool = False
     max_soc: float = DEFAULT_MAX_SOC_LIMIT
     auto_resume_on_recovery: bool = True
     communication_ok: bool = True
@@ -611,10 +617,57 @@ class KostalData:
         return min(100.0, soc_percent + self.hold_soc_offset)
 
     def effective_min_soc(self) -> float:
-        """Min SOC for 1042: the user's limit or a discharge hold, whichever is higher."""
-        if self.discharge_hold_min_soc is None:
+        """Min SOC for 1042: the user's limit or a discharge hold, whichever is higher.
+
+        A hold on 1040 leaves 1042 to the user's limit.
+        """
+        if self.discharge_hold_min_soc is None or self.hold_use_discharge_limit:
             return self.min_soc
         return max(self.min_soc, self.discharge_hold_min_soc)
+
+    async def async_restore_discharge_limit(self) -> None:
+        """Write the battery's maximum back to 1040 if a hold blocked it, or if it reads as blocked."""
+        data = self.coordinator.data if self.coordinator is not None else None
+        current_limit = data.get(REG_BATTERY_MAX_DISCHARGE_POWER_W) if data else None
+        if not self.discharge_limit_blocked and (current_limit is None or current_limit > 0.0):
+            return
+        # 1078 follows the BMS, which throttles at low SoC or in the cold. A value read
+        # then would stay in 1040 for as long as another keep-alive runs, so write the
+        # higher of it and the maximum control power.
+        battery_limit = data.get(REG_BATTERY_MAX_DISCHARGE_LIMIT) if data else None
+        max_discharge = max((v for v in (battery_limit, self.max_battery_power_w()) if v), default=None)
+        if max_discharge is None:
+            _LOGGER.warning("Discharge hold: cannot restore 1040 because the maximum discharge power is unknown")
+            return
+        try:
+            await self.handler.write_float(REG_BATTERY_MAX_DISCHARGE_POWER_W, max_discharge)
+        except Exception:
+            if not battery_limit or battery_limit == max_discharge:
+                raise
+            await self.handler.write_float(REG_BATTERY_MAX_DISCHARGE_POWER_W, battery_limit)
+        self.discharge_limit_blocked = False
+
+    async def async_write_discharge_hold(self, soc_percent: float) -> None:
+        """Stop discharging at soc_percent, through 1042 or, with the option on, 1040.
+
+        1042 is the default: since the firmware of October 2026, 1040 = 0 still lets
+        the inverter's own ~180 W standby draw come from the battery, while a min SOC
+        at or above the SoC stops discharge at 0 A. 1040 has no SOC of its own, so it
+        is only blocked once the SoC is down at soc_percent. Charging is not affected
+        either way. Must be written continuously, like every battery register.
+        """
+        self.discharge_hold_min_soc = soc_percent
+        if not self.hold_use_discharge_limit:
+            await self.handler.write_float(REG_BATTERY_MIN_SOC, self.effective_min_soc())
+            return
+        data = self.coordinator.data if self.coordinator is not None else None
+        soc = data.get(REG_BATTERY_SOC) if data else None
+        if soc is not None and soc > soc_percent:
+            await self.async_restore_discharge_limit()
+            return
+        # Before the write, so a failed write is still restored on release
+        self.discharge_limit_blocked = True
+        await self.handler.write_float(REG_BATTERY_MAX_DISCHARGE_POWER_W, 0.0)
 
     def control_settle_seconds(self) -> float:
         """Time the inverter needs without writes to return to internal control."""
@@ -793,11 +846,34 @@ async def _async_options_update_listener(hass: HomeAssistant, entry: ConfigEntry
         await hass.config_entries.async_reload(entry.entry_id)
         return
     _apply_grid_control_options(entry.options, data)
+    previous_use_limit = data.hold_use_discharge_limit
     _apply_hold_options(entry.options, data)
+    if data.hold_use_discharge_limit != previous_use_limit:
+        await _async_switch_hold_register(data, previous_use_limit)
+
+
+async def _async_switch_hold_register(data: KostalData, used_limit: bool) -> None:
+    """Move a running hold to the register the option now selects: the new one first, so the hold has no gap."""
+    if data.control_settling():
+        # A write now would keep a stopped setpoint alive; the old register times out by itself
+        return
+    try:
+        hold = data.discharge_hold_min_soc
+        if hold is not None:
+            await data.async_write_discharge_hold(hold)
+        if used_limit:
+            await data.async_restore_discharge_limit()
+        elif hold is not None:
+            await data.handler.write_float(REG_BATTERY_MIN_SOC, data.effective_min_soc())
+    except Exception as err:
+        _LOGGER.warning("Discharge hold: could not move the hold to the selected register: %s", err)
 
 
 def _apply_hold_options(options: Any, data: KostalData) -> None:
-    """Copy the discharge hold offset to the runtime data; the holds use it on their next write."""
+    """Copy the discharge hold options to the runtime data; the holds use them on their next write."""
+    data.hold_use_discharge_limit = bool(
+        options.get(CONF_HOLD_USE_DISCHARGE_LIMIT, DEFAULT_HOLD_USE_DISCHARGE_LIMIT)
+    )
     offset = float(options.get(CONF_HOLD_SOC_OFFSET, DEFAULT_HOLD_SOC_OFFSET))
     data.hold_soc_offset = min(HOLD_SOC_OFFSET_RANGE[1], max(HOLD_SOC_OFFSET_RANGE[0], offset))
 

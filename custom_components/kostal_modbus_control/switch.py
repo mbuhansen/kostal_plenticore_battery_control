@@ -408,23 +408,19 @@ class KostalBaseSwitch(SwitchEntity):
         return coordinator.data.get(REG_BATTERY_SOC)
 
     async def _hold_discharge_at(self, soc_percent: float) -> None:
-        """Stop discharging at soc_percent by writing it as the inverter's min SOC (1042).
-
-        Used instead of blocking 1040: since the firmware of October 2026, 1040 = 0
-        still lets the inverter's own ~180 W standby draw come from the battery,
-        while a min SOC at or above the SoC stops discharge at 0 A. Charging is not
-        affected. Must be written continuously, like every battery register.
-        """
-        self._data.discharge_hold_min_soc = soc_percent
-        await self._data.handler.write_float(REG_BATTERY_MIN_SOC, self._data.effective_min_soc())
+        """Stop discharging at soc_percent — see KostalData.async_write_discharge_hold."""
+        await self._data.async_write_discharge_hold(soc_percent)
 
     async def _release_discharge_hold(self) -> None:
-        """Hand 1042 back to the Battery Minimum SOC Limit (5 % when it is not in use).
+        """Hand 1042 back to the Battery Minimum SOC Limit (5 % when it is not in use), or restore 1040.
 
         One write so the release takes effect at once; the min SOC number keeps
         writing its own limit if one is set.
         """
         self._data.discharge_hold_min_soc = None
+        if self._data.hold_use_discharge_limit:
+            await self._data.async_restore_discharge_limit()
+            return
         await self._data.handler.write_float(REG_BATTERY_MIN_SOC, self._data.effective_min_soc())
 
     async def _write_power_setpoint(self, watts: float) -> None:
@@ -590,7 +586,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
             return
         # Predbat chooses the reserve itself: target + 1 for a charge hold and
         # SOC + 1 for a car hold, as far as seen. It is used as it is.
-        # The reserve is held through the inverter's min SOC — see _hold_discharge_at.
+        # See _hold_discharge_at for how the reserve is held.
         reserve = self._predbat_reserve_percent()
         soc = self._battery_soc()
         other_switch_on = any(switch is not self and switch.is_on for switch in self._related_switches)
@@ -615,14 +611,17 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         hold_soc = self._data.hold_min_soc(reserve)
         if not self._reserve_holding or self._data.discharge_hold_min_soc != hold_soc:
             _LOGGER.info(
-                "Predbat reserve hold: min SOC set to %.1f%% (reserve %.1f%% + offset, %s)",
+                "Predbat reserve hold: discharge held at %.1f%% (reserve %.1f%% + offset, %s)",
                 hold_soc, reserve, hold_status,
             )
             self._write_activity(
-                f"Predbat {hold_status.lower()}: min SOC set to {hold_soc:.1f}% (reserve {reserve:.1f}%)"
+                f"Predbat {hold_status.lower()}: discharge held at {hold_soc:.1f}% (reserve {reserve:.1f}%)"
             )
             self._reserve_holding = True
         self._set_predbat_status(hold_status if soc is not None and soc <= hold_soc else "Inactive")
+        if soc is None and self._data.hold_use_discharge_limit:
+            # 1040 has no SOC of its own: without a reading the SoC may be far above the hold
+            return
         await self._hold_discharge_at(hold_soc)
 
     async def _release_reserve_hold(self) -> None:
@@ -819,6 +818,19 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         except (ValueError, TypeError):
             return None
 
+    def _predbat_hold_base(self, soc: float, hold_limit: float, car_hold: bool) -> float | None:
+        """SOC the Predbat hold in Charge Start stops discharging at, before the hold offset.
+
+        A car hold stops at the current SoC. Otherwise 1042 holds Predbat's target,
+        because a min SOC above the SoC can make the inverter drop out of FeedIn,
+        and 1040 blocks at the SOC charging stops at, which 1040 can do without that.
+        """
+        if car_hold:
+            return soc
+        if self._data.hold_use_discharge_limit:
+            return hold_limit
+        return self._predbat_best_charge_limit()
+
     def _predbat_charge_stop_watts(self) -> float:
         soc, charge_start_limit, hold_limit, should_charge_now = self._predbat_limit_decision()
         if should_charge_now is None:
@@ -967,6 +979,8 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
             # A setpoint is in force now: if Predbat becomes active, its first
             # tick must go through the charge stop and the settling wait
             self._predbat_was_charging = True
+            # Heals a 1040 a failed write or a reload left blocked
+            await self._data.async_restore_discharge_limit()
             await self._write_power_setpoint(-self._charge_target_watts())
 
     def _charge_target_watts(self) -> float:
@@ -1044,6 +1058,8 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
                 return
             if self._predbat_startup_write_blocked():
                 return
+            # Heals a 1040 a failed write or a reload left blocked
+            await self._data.async_restore_discharge_limit()
             await self._write_power_setpoint(-charge_watts)
             return
 
@@ -1089,20 +1105,18 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         car_hold = self._predbat_car_hold_active()
         hold_status = "Hold for car" if car_hold else "Hold"
         self._set_predbat_status(hold_status)
-        # Discharge down to Predbat's target and stop there; a car hold stops at the
-        # current SoC. Both get the hold offset on top, like the reserve hold.
-        hold_base = soc if car_hold else self._predbat_best_charge_limit()
+        hold_base = self._predbat_hold_base(soc, hold_limit, car_hold)
         if hold_base is None:
-            _LOGGER.debug("Predbat Control: best_charge_limit unavailable — skipping min SOC hold")
+            _LOGGER.debug("Predbat Control: best_charge_limit unavailable — skipping the hold")
             return
         hold_soc = self._data.hold_min_soc(hold_base)
         if not self._predbat_discharge_blocked or self._data.discharge_hold_min_soc != hold_soc:
             _LOGGER.info(
-                "Predbat Control: SOC=%.1f%% — min SOC held at %.1f%% (%s)",
+                "Predbat Control: SOC=%.1f%% — discharge held at %.1f%% (%s)",
                 soc, hold_soc, hold_status,
             )
             self._write_activity(
-                f"Predbat {hold_status.lower()}: min SOC held at {hold_soc:.1f}% (SOC={soc:.1f}%)"
+                f"Predbat {hold_status.lower()}: discharge held at {hold_soc:.1f}% (SOC={soc:.1f}%)"
             )
             self._predbat_discharge_blocked = True
         await self._hold_discharge_at(hold_soc)
@@ -1156,6 +1170,8 @@ class KostalDischargeStartSwitch(KostalBaseSwitch):
     async def _loop_action(self, *args):
         if not self._attr_is_on:
             return
+        # A 1040 left blocked by a failed write or a reload would stop the discharge
+        await self._data.async_restore_discharge_limit()
         await self._write_power_setpoint(abs(self._data.discharge_power_w()))
 
     async def _stop_action(self):
@@ -1181,6 +1197,10 @@ class KostalBlockDischargeSwitch(KostalBaseSwitch):
         if soc is not None:
             hold = self._data.hold_min_soc(soc)
         if hold is None:
+            if self._data.hold_use_discharge_limit:
+                # 1040 = 0 needs no SOC, and any hold at or above the SoC blocks
+                await self._hold_discharge_at(100.0)
+                return
             _LOGGER.warning("Block Discharge: no SOC reading yet — discharge not blocked")
             return
         await self._hold_discharge_at(hold)
@@ -1529,6 +1549,8 @@ class KostalInverterControlSwitch(KostalBaseSwitch, RestoreEntity):
             return
         async with self._calculation_lock:
             self._last_calculation = time.monotonic()
+            # A 1040 left blocked by a failed write or a reload would stop the discharge
+            await self._data.async_restore_discharge_limit()
             await self._calculate_and_write()
 
     def _grid_reading_time(self) -> datetime | None:
