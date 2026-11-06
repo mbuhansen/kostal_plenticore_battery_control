@@ -308,8 +308,9 @@ PREDBAT_ACTIVE_MODES = frozenset({
     "Control charge",
     "Control charge & discharge",
 })
-# Predbat charge-start hysteresis in percent points relative to
-# predbat.best_charge_limit.
+# Predbat charge hysteresis in percent points relative to
+# predbat.best_charge_limit: charging starts at or below limit - start delta and
+# stops at limit + hold delta. The min SOC hold itself is at the limit.
 PREDBAT_CHARGE_START_DELTA = 1.0
 PREDBAT_HOLD_DELTA = 1.0
 # Margin on top of the inverter timeout before anything is written after a
@@ -389,7 +390,7 @@ DEFAULT_MIN_SOC_LIMIT = MIN_SOC_LIMIT_RANGE[0]
 DEFAULT_MAX_SOC_LIMIT = MAX_SOC_LIMIT_RANGE[1]
 
 # Points added on top of a discharge hold's SOC (Predbat's reserve, the Predbat
-# hold limit, or SoC + 1 for Block Discharge and Hold for car). With the min SOC
+# target, or the SoC for Block Discharge and Hold for car). With the min SOC
 # exactly at the SoC, the SoC the BMS reports can rebound one point once the
 # battery stops, so the inverter starts discharging again for a moment.
 # 0 keeps the holds as they are.

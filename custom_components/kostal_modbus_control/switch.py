@@ -588,8 +588,8 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
     async def _evaluate_reserve_hold(self) -> None:
         if self._attr_is_on:
             return
-        # Predbat sets the reserve to target + 1 for a charge hold (the same band as
-        # best_charge_limit + PREDBAT_HOLD_DELTA above) and to SOC + 1 for a car hold.
+        # Predbat chooses the reserve itself: target + 1 for a charge hold and
+        # SOC + 1 for a car hold, as far as seen. It is used as it is.
         # The reserve is held through the inverter's min SOC — see _hold_discharge_at.
         reserve = self._predbat_reserve_percent()
         soc = self._battery_soc()
@@ -795,14 +795,7 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         if coordinator is not None and coordinator.data is not None:
             soc = coordinator.data.get(REG_BATTERY_SOC)
 
-        best_limit_state = self.hass.states.get("predbat.best_charge_limit")
-        best_limit = None
-        if best_limit_state is not None:
-            try:
-                best_limit = float(best_limit_state.state)
-            except (ValueError, TypeError):
-                pass
-
+        best_limit = self._predbat_best_charge_limit()
         if soc is None or best_limit is None:
             return soc, None, None, None
 
@@ -815,6 +808,16 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         else:
             should_charge_now = soc <= charge_start_limit
         return soc, charge_start_limit, hold_limit, should_charge_now
+
+    def _predbat_best_charge_limit(self) -> float | None:
+        """Return predbat.best_charge_limit in percent, or None."""
+        state = self.hass.states.get("predbat.best_charge_limit")
+        if state is None:
+            return None
+        try:
+            return float(state.state)
+        except (ValueError, TypeError):
+            return None
 
     def _predbat_charge_stop_watts(self) -> float:
         soc, charge_start_limit, hold_limit, should_charge_now = self._predbat_limit_decision()
@@ -1086,9 +1089,13 @@ class KostalChargeStartSwitch(KostalBaseSwitch):
         car_hold = self._predbat_car_hold_active()
         hold_status = "Hold for car" if car_hold else "Hold"
         self._set_predbat_status(hold_status)
-        # Discharge down to the hold limit and stop there; a car hold stops one point
-        # above the current SoC. Both get the hold offset on top, like the reserve hold.
-        hold_soc = self._data.hold_min_soc(soc + 1.0 if car_hold else hold_limit)
+        # Discharge down to Predbat's target and stop there; a car hold stops at the
+        # current SoC. Both get the hold offset on top, like the reserve hold.
+        hold_base = soc if car_hold else self._predbat_best_charge_limit()
+        if hold_base is None:
+            _LOGGER.debug("Predbat Control: best_charge_limit unavailable — skipping min SOC hold")
+            return
+        hold_soc = self._data.hold_min_soc(hold_base)
         if not self._predbat_discharge_blocked or self._data.discharge_hold_min_soc != hold_soc:
             _LOGGER.info(
                 "Predbat Control: SOC=%.1f%% — min SOC held at %.1f%% (%s)",
@@ -1167,12 +1174,12 @@ class KostalBlockDischargeSwitch(KostalBaseSwitch):
     async def _loop_action(self, *args):
         if not self._attr_is_on:
             return
-        # Hold one point (plus the hold offset) above the current SoC, so PV can still
+        # Hold at the current SoC (plus the hold offset), so PV can still
         # charge and the hold moves up with it. Without a SoC reading, keep the last hold.
         soc = self._battery_soc()
         hold = self._data.discharge_hold_min_soc
         if soc is not None:
-            hold = self._data.hold_min_soc(soc + 1.0)
+            hold = self._data.hold_min_soc(soc)
         if hold is None:
             _LOGGER.warning("Block Discharge: no SOC reading yet — discharge not blocked")
             return
