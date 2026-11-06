@@ -13,6 +13,7 @@ from homeassistant.const import CONF_HOST
 
 from homeassistant.core import callback
 from homeassistant.helpers.selector import (
+    BooleanSelector,
     EntitySelector,
     EntitySelectorConfig,
     NumberSelector,
@@ -37,6 +38,8 @@ from .const import (
     CONF_EXTERNAL_CONTROL_MAX_CHARGE_W,
     CONF_EXTERNAL_CONTROL_HYSTERESIS_W, DEFAULT_EXTERNAL_CONTROL_HYSTERESIS_W,
     CONF_EXTERNAL_CONTROL_EMA_ALPHA, DEFAULT_EXTERNAL_CONTROL_EMA_ALPHA, MIN_EXTERNAL_CONTROL_EMA_ALPHA,
+    CONF_HOLD_SOC_OFFSET, DEFAULT_HOLD_SOC_OFFSET, HOLD_SOC_OFFSET_RANGE,
+    CONF_HOLD_USE_DISCHARGE_LIMIT, DEFAULT_HOLD_USE_DISCHARGE_LIMIT,
 )
 from .modbus_handler import KostalModbusHandler
 
@@ -235,7 +238,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class KostalOptionsFlowHandler(config_entries.OptionsFlow):
-    """Options for grid control from an external grid-power entity.
+    """Options: the discharge hold settings, and grid control from an external grid-power entity.
 
     Always offered — also with a smart meter, so the feature can be tested on
     such an installation — but the form warns when a meter is detected.
@@ -259,6 +262,14 @@ class KostalOptionsFlowHandler(config_entries.OptionsFlow):
         current = self.config_entry.options
         schema = vol.Schema(
             {
+                vol.Optional(
+                    CONF_HOLD_SOC_OFFSET,
+                    default=current.get(CONF_HOLD_SOC_OFFSET, DEFAULT_HOLD_SOC_OFFSET),
+                ): _number_selector(HOLD_SOC_OFFSET_RANGE[0], HOLD_SOC_OFFSET_RANGE[1], 1.0, "%"),
+                vol.Optional(
+                    CONF_HOLD_USE_DISCHARGE_LIMIT,
+                    default=current.get(CONF_HOLD_USE_DISCHARGE_LIMIT, DEFAULT_HOLD_USE_DISCHARGE_LIMIT),
+                ): BooleanSelector(),
                 _grid_entity_field(current.get(CONF_SOURCE_GRID_POWER_ENTITY)): _grid_entity_selector(),
                 vol.Optional(
                     CONF_GRID_TARGET_W,

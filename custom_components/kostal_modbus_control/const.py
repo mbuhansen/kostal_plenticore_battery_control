@@ -35,7 +35,7 @@ REG_INVERTER_STATE = 56       # Inverter state - U32 (0x38)
 REG_BATTERY_AC_POWER_SETPOINT_W = 1026      # Battery charge power (AC) setpoint, absolute (W) - Float (0x402) RW. PLENTICORE BI and (MP) G3 only; used for BI
 REG_BATTERY_DC_POWER_SETPOINT_W = 1034      # Battery charge power (DC) setpoint, absolute (W) - Float (0x40A) RW. Used for hybrid inverters
 REG_BATTERY_MAX_CHARGE_POWER_W = 1038       # Battery max. charge power limit, absolute (W) - Float (0x40E) RW. Written 0 to block charging
-REG_BATTERY_MAX_DISCHARGE_POWER_W = 1040    # Battery max. discharge power limit, absolute (W) - Float (0x410) RW. Read only; discharge holds use the min SOC (1042)
+REG_BATTERY_MAX_DISCHARGE_POWER_W = 1040    # Battery max. discharge power limit, absolute (W) - Float (0x410) RW. Written 0 by discharge holds when the 1040 option is on; otherwise they use the min SOC (1042)
 REG_BATTERY_MIN_SOC = 1042        # Minimum SOC % - Float (0x412) RW
 REG_BATTERY_MAX_SOC = 1044        # Maximum SOC % - Float (0x414) RW
 
@@ -308,8 +308,9 @@ PREDBAT_ACTIVE_MODES = frozenset({
     "Control charge",
     "Control charge & discharge",
 })
-# Predbat charge-start hysteresis in percent points relative to
-# predbat.best_charge_limit.
+# Predbat charge hysteresis in percent points relative to
+# predbat.best_charge_limit: charging starts at or below limit - start delta and
+# stops at limit + hold delta. The min SOC hold itself is at the limit.
 PREDBAT_CHARGE_START_DELTA = 1.0
 PREDBAT_HOLD_DELTA = 1.0
 # Margin on top of the inverter timeout before anything is written after a
@@ -363,6 +364,8 @@ NUMBER_DISCHARGE_RATE = "discharge_rate"
 NUMBER_FUSE_SIZE = "fuse_size"
 NUMBER_MIN_SOC_LIMIT = "min_soc_limit"
 NUMBER_MAX_SOC_LIMIT = "max_soc_limit"
+CONF_HOLD_SOC_OFFSET = "hold_soc_offset"
+CONF_HOLD_USE_DISCHARGE_LIMIT = "hold_use_discharge_limit"
 
 # Defaults
 # Charge/discharge rates in Watts. A rate follows the maximum battery control
@@ -386,6 +389,19 @@ MIN_SOC_LIMIT_RANGE = (5.0, 100.0)
 MAX_SOC_LIMIT_RANGE = (5.0, 100.0)
 DEFAULT_MIN_SOC_LIMIT = MIN_SOC_LIMIT_RANGE[0]
 DEFAULT_MAX_SOC_LIMIT = MAX_SOC_LIMIT_RANGE[1]
+
+# Points added on top of a discharge hold's SOC (Predbat's reserve, the Predbat
+# target, or the SoC for Block Discharge and Hold for car). With the min SOC
+# exactly at the SoC, the SoC the BMS reports can rebound one point once the
+# battery stops, so the inverter starts discharging again for a moment.
+# 0 keeps the holds as they are.
+HOLD_SOC_OFFSET_RANGE = (0.0, 10.0)
+DEFAULT_HOLD_SOC_OFFSET = 0.0
+# Discharge holds use the min SOC (1042) by default. It stops discharge at 0 A, but
+# a min SOC above the SoC can make the inverter drop out of FeedIn. Blocking the
+# discharge limit (1040 = 0) instead keeps the inverter running, while its own
+# standby draw (around 180 W) still comes from the battery.
+DEFAULT_HOLD_USE_DISCHARGE_LIMIT = False
 
 # EMS settings
 EMS_SAFETY_MARGIN = 0.90   # Trigger at 90% of fuse size
