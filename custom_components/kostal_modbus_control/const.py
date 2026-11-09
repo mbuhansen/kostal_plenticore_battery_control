@@ -397,11 +397,16 @@ DEFAULT_MAX_SOC_LIMIT = MAX_SOC_LIMIT_RANGE[1]
 # 0 keeps the holds as they are.
 HOLD_SOC_OFFSET_RANGE = (0.0, 10.0)
 DEFAULT_HOLD_SOC_OFFSET = 0.0
-# Discharge holds use the min SOC (1042) by default. It stops discharge at 0 A, but
-# a min SOC above the SoC can make the inverter drop out of FeedIn. Blocking the
-# discharge limit (1040 = 0) instead keeps the inverter running, while its own
-# standby draw (around 180 W) still comes from the battery.
-DEFAULT_HOLD_USE_DISCHARGE_LIMIT = False
+# Discharge holds block the discharge limit (1040 = 0) by default, which keeps the
+# inverter running. Since the firmware of October 2026 its own standby draw can
+# still come from the battery that way. The alternative is the min SOC (1042),
+# which stops discharge at 0 A, but a min SOC above the SoC can make the inverter
+# drop out of FeedIn.
+DEFAULT_HOLD_USE_DISCHARGE_LIMIT = True
+# A hold on 1040 also writes the SoC to 1042 when the battery keeps delivering more
+# than this for this long. The time also lets a reading from before the block pass.
+DISCHARGE_LIMIT_GUARD_POWER_W = 50.0
+DISCHARGE_LIMIT_GUARD_SECONDS = 30.0
 
 # EMS settings
 EMS_SAFETY_MARGIN = 0.90   # Trigger at 90% of fuse size

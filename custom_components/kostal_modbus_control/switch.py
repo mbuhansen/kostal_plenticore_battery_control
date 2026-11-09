@@ -28,7 +28,6 @@ from .const import (
     PREDBAT_CHARGE_START_DELTA,
     PREDBAT_HOLD_DELTA,
     REG_BATTERY_MAX_CHARGE_POWER_W,
-    REG_BATTERY_MIN_SOC,
     REG_TOTAL_ACTIVE_POWER,
     REG_BATTERY_POWER,
     REG_BATTERY_MAX_CHARGE_LIMIT,
@@ -412,16 +411,11 @@ class KostalBaseSwitch(SwitchEntity):
         await self._data.async_write_discharge_hold(soc_percent)
 
     async def _release_discharge_hold(self) -> None:
-        """Hand 1042 back to the Battery Minimum SOC Limit (5 % when it is not in use), or restore 1040.
+        """End a discharge hold at once — see KostalData.async_release_discharge_hold.
 
-        One write so the release takes effect at once; the min SOC number keeps
-        writing its own limit if one is set.
+        The min SOC number keeps writing its own limit if one is set.
         """
-        self._data.discharge_hold_min_soc = None
-        if self._data.hold_use_discharge_limit:
-            await self._data.async_restore_discharge_limit()
-            return
-        await self._data.handler.write_float(REG_BATTERY_MIN_SOC, self._data.effective_min_soc())
+        await self._data.async_release_discharge_hold()
 
     async def _write_power_setpoint(self, watts: float) -> None:
         """Write a signed battery power setpoint in Watts (negative = charge).
