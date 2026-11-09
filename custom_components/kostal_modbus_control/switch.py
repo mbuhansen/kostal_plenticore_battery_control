@@ -1190,16 +1190,21 @@ class KostalBlockDischargeSwitch(KostalBaseSwitch):
     async def _loop_action(self, *args):
         if not self._attr_is_on:
             return
-        # Hold at the current SoC (plus the hold offset), so PV can still
-        # charge and the hold moves up with it. Without a SoC reading, keep the last hold.
+        # Hold at the current SoC (plus the hold offset), so PV can still charge and
+        # the hold moves up with it. It never moves down while on: a SoC that drops a
+        # point must not allow the next point of discharge. Without a SoC reading,
+        # keep the last hold.
         soc = self._battery_soc()
         hold = self._data.discharge_hold_min_soc
         if soc is not None:
-            hold = self._data.hold_min_soc(soc)
+            target = self._data.hold_min_soc(soc)
+            hold = target if hold is None else max(hold, target)
         if hold is None:
             if self._data.hold_use_discharge_limit:
-                # 1040 = 0 needs no SOC, and any hold at or above the SoC blocks
+                # 1040 = 0 needs no SOC, and any hold at or above the SoC blocks.
+                # Not kept as the hold, which only moves up.
                 await self._hold_discharge_at(100.0)
+                self._data.discharge_hold_min_soc = None
                 return
             _LOGGER.warning("Block Discharge: no SOC reading yet — discharge not blocked")
             return
