@@ -336,12 +336,16 @@ class KostalBatteryMaxControlPowerSensor(KostalBaseSensor):
     def extra_state_attributes(self) -> dict[str, Any]:
         observed = self._data.battery_nominal_current_observed
         voltage_peak = self._data.battery_voltage_peak
-        max_voltage = self._data.battery_max_voltage_learned
+        max_voltage = self._data.battery_max_voltage()
+        learned_voltage = self._data.battery_max_voltage_learned
+        reported_voltage = self._data.battery_max_voltage_sunspec()
         return {
             "nominal_current_observed": round(observed, 2) if observed is not None else None,
             "nominal_current_documented": self._data.documented_battery_nominal_current(),
             "battery_voltage_peak": round(voltage_peak, 1) if voltage_peak is not None else None,
             "battery_max_voltage": round(max_voltage, 1) if max_voltage is not None else None,
+            "battery_max_voltage_reported": round(reported_voltage, 1) if reported_voltage is not None else None,
+            "battery_max_voltage_learned": round(learned_voltage, 1) if learned_voltage is not None else None,
             "max_voltage_known": max_voltage is not None,
         }
 
@@ -368,11 +372,11 @@ class KostalBatteryMaxControlPowerSourceSensor(KostalBaseSensor):
 
 
 class KostalBatteryMaxVoltageSensor(KostalBaseSensor):
-    """Battery maximum voltage learned at a full charge, unknown until then."""
+    """Battery maximum voltage in use: reported through SunSpec or learned at a full charge."""
 
     _key = SENSOR_BATTERY_MAX_VOLTAGE
     _name = "Battery Max Voltage"
-    _address = REG_BATTERY_VOLTAGE  # Not read directly — native_value is learned
+    _address = REG_BATTERY_VOLTAGE  # Not read directly — native_value is reported or learned
     _attr_device_class = SensorDeviceClass.VOLTAGE
     _attr_native_unit_of_measurement = UnitOfElectricPotential.VOLT
     _attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -383,7 +387,7 @@ class KostalBatteryMaxVoltageSensor(KostalBaseSensor):
 
     @property
     def native_value(self):
-        max_voltage = self._data.battery_max_voltage_learned
+        max_voltage = self._data.battery_max_voltage()
         return round(max_voltage, 1) if max_voltage is not None else None
 
 

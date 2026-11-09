@@ -51,7 +51,17 @@ from .const import (
     BATTERY_FULL_SOC,
     BATTERY_NOMINAL_CURRENT_BY_GENERATION,
     BI_NOMINAL_POWER_BY_POWER_CLASS,
+    BATTERY_MAX_VOLTAGE_RANGE,
+    KEY_BATTERY_MAX_VOLTAGE_SUNSPEC,
     MAX_POWER_SOURCE_LEARNED,
+    MAX_POWER_SOURCE_SUNSPEC,
+    SUNSPEC_BASE_ADDRESS,
+    SUNSPEC_BATTERY_MODEL_ID,
+    SUNSPEC_BATTERY_V_SF_OFFSET,
+    SUNSPEC_BATTERY_VMAX_OFFSET,
+    SUNSPEC_END_MODEL_ID,
+    SUNSPEC_MARKER,
+    SUNSPEC_MAX_MODELS,
     MAX_POWER_SOURCE_INVERTER_MAX_POWER,
     MAX_POWER_SOURCE_BATTERY_VOLTAGE,
     MAX_POWER_SOURCE_BI_POWER_CLASS,
@@ -150,6 +160,7 @@ class KostalCoordinator(DataUpdateCoordinator[dict[Any, Any]]):
         # Plenticore implements every documented register, so they are read
         # once and then skipped for the life of the entry.
         self._unsupported: set = set()
+        self._sunspec_battery_model_address: int | None = None
         self._host = host
         # Software version from the REST API, used only when register 58 is
         # refused. Fetched once per connection — see _async_rest_software_version.
@@ -177,6 +188,37 @@ class KostalCoordinator(DataUpdateCoordinator[dict[Any, Any]]):
                 err,
             )
             return None
+
+    async def _async_find_sunspec_battery_model(self) -> int | None:
+        """Walk the SunSpec model list and return the address of the battery model, or None."""
+        if await self._handler.read_uint32_big_endian(SUNSPEC_BASE_ADDRESS) != SUNSPEC_MARKER:
+            return None
+        address = SUNSPEC_BASE_ADDRESS + 2
+        for _ in range(SUNSPEC_MAX_MODELS):
+            model_id = await self._handler.read_uint16(address)
+            if model_id == SUNSPEC_END_MODEL_ID:
+                return None
+            length = await self._handler.read_uint16(address + 1)
+            if model_id == SUNSPEC_BATTERY_MODEL_ID:
+                return address if length > SUNSPEC_BATTERY_V_SF_OFFSET else None
+            address += 2 + length
+        return None
+
+    async def _async_read_sunspec_battery_max_voltage(self) -> float | None:
+        """Battery maximum voltage from SunSpec model 802, or None when it is not usable."""
+        if self._sunspec_battery_model_address is None:
+            self._sunspec_battery_model_address = await self._async_find_sunspec_battery_model()
+            if self._sunspec_battery_model_address is None:
+                self._unsupported.add(KEY_BATTERY_MAX_VOLTAGE_SUNSPEC)
+                _LOGGER.info("This inverter has no SunSpec battery model — the battery maximum voltage is learned instead")
+                return None
+        first_point = self._sunspec_battery_model_address + 2
+        raw = await self._handler.read_uint16(first_point + SUNSPEC_BATTERY_VMAX_OFFSET)
+        scale = await self._handler.read_int16(first_point + SUNSPEC_BATTERY_V_SF_OFFSET)
+        if not -10 <= scale <= 10:
+            return None
+        voltage = round(raw * 10.0**scale, 3)
+        return voltage if BATTERY_MAX_VOLTAGE_RANGE[0] <= voltage <= BATTERY_MAX_VOLTAGE_RANGE[1] else None
 
     async def _async_rest_software_version(self) -> str | None:
         """UI software version from the inverter's REST API.
@@ -236,6 +278,8 @@ class KostalCoordinator(DataUpdateCoordinator[dict[Any, Any]]):
                 # A firmware update restarts the inverter, so fetch the REST
                 # version again once the connection is back
                 self._rest_version_next_try = 0.0
+                # So does the model list, which a firmware update can change
+                self._sunspec_battery_model_address = None
             data: dict = {}
             # Float registers (2 registers each)
             for address in (
@@ -312,6 +356,12 @@ class KostalCoordinator(DataUpdateCoordinator[dict[Any, Any]]):
                 data[key] = await self._read_optional(key, description, read)
             if REG_SOFTWARE_VERSION in self._unsupported:
                 data[REG_SOFTWARE_VERSION] = await self._async_rest_software_version()
+            if not self._kostal_data.is_battery_inverter:
+                data[KEY_BATTERY_MAX_VOLTAGE_SUNSPEC] = await self._read_optional(
+                    KEY_BATTERY_MAX_VOLTAGE_SUNSPEC,
+                    "the SunSpec battery model",
+                    self._async_read_sunspec_battery_max_voltage,
+                )
             self._kostal_data.update_observed_battery_current(data)
             # KSEM energy registers (separate handler, optional)
             ksem = self._kostal_data.ksem_handler
@@ -537,10 +587,10 @@ class KostalData:
     def max_battery_power(self) -> tuple[float | None, str | None]:
         """Maximum battery control power in Watts and what it is based on.
 
-        Hybrid: the nominal battery current times the battery's maximum voltage
-        once that is learned at a full charge. Until then the inverter max power
-        (531), or the current times the highest battery voltage seen when 531 is
-        unknown. BI: the nominal AC power from the power class, or the battery's
+        Hybrid: the nominal battery current times the battery's maximum voltage,
+        reported through SunSpec or else learned at a full charge. Until it is
+        learned the inverter max power (531), or the current times the highest
+        battery voltage seen when 531 is unknown. BI: the nominal AC power from the power class, or the battery's
         discharge limit 1078 when the power class is unknown.
         """
         data = self.coordinator.data if self.coordinator is not None else None
@@ -565,6 +615,9 @@ class KostalData:
             return None, None
 
         current = self.battery_nominal_current()
+        reported_voltage = data.get(KEY_BATTERY_MAX_VOLTAGE_SUNSPEC)
+        if current is not None and reported_voltage is not None:
+            return current * reported_voltage, MAX_POWER_SOURCE_SUNSPEC
         if current is not None and self.battery_max_voltage_learned is not None:
             return current * self.battery_max_voltage_learned, MAX_POWER_SOURCE_LEARNED
         if self.inverter_max_power_w:
@@ -573,6 +626,16 @@ class KostalData:
         if current is None or not voltages:
             return None, None
         return current * max(voltages), MAX_POWER_SOURCE_BATTERY_VOLTAGE
+
+    def battery_max_voltage_sunspec(self) -> float | None:
+        """Battery maximum voltage the inverter reports through SunSpec, or None."""
+        data = self.coordinator.data if self.coordinator is not None else None
+        return data.get(KEY_BATTERY_MAX_VOLTAGE_SUNSPEC) if data else None
+
+    def battery_max_voltage(self) -> float | None:
+        """Battery maximum voltage in use: the reported one, or else the learned one."""
+        reported = self.battery_max_voltage_sunspec()
+        return reported if reported is not None else self.battery_max_voltage_learned
 
     def max_battery_power_w(self) -> float | None:
         """Maximum battery control power in Watts, or None when it cannot be determined."""

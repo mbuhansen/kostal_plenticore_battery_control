@@ -42,18 +42,35 @@ REG_BATTERY_MAX_SOC = 1044        # Maximum SOC % - Float (0x414) RW
 # Maximum battery control power. Hybrid inverters: the documented nominal
 # battery current (Inom) of the inverter generation — the first number of the
 # software version: 01.30.12092 = G1, 02.15.xxxxx = G2, 3.07.00.xxxxx = G3 (and
-# MP G3) — times the battery's maximum voltage. The maximum voltage depends on
-# the battery and cannot be read: 1076 is not based on Inom with every battery
-# (with a Dyness Tower on a G1 it is the battery's own charge limit at the
-# actual voltage). It is learned instead as the highest battery voltage seen at
-# a state of charge of at least BATTERY_FULL_SOC, and kept across restarts.
+# MP G3) — times the battery's maximum voltage. The current is not read from
+# the inverter, as the reported values fall with what the battery allows: 1076
+# is not based on Inom with every battery (with a Dyness Tower on a G1 it is the
+# battery's own charge limit at the actual voltage). The maximum voltage is read
+# from SunSpec model 802 (VMax) when the inverter reports it. Otherwise it is
+# learned as the highest battery voltage seen at a state of charge of at least
+# BATTERY_FULL_SOC, and kept across restarts.
 # Until then the inverter max power (register 531) is used — the power class
 # is not a number on a G3. A limit that is too high is harmless, as the
 # inverter clamps a setpoint above its limit itself, while one that is too low
 # locks the user out.
 BATTERY_FULL_SOC = 99.0
+# SunSpec models follow each other from the base address. Where a model starts
+# differs between inverters (a G1 has no model 203), so the list is walked.
+SUNSPEC_BASE_ADDRESS = 40000
+SUNSPEC_MARKER = 0x53756E53  # "SunS", readable only as both registers together
+SUNSPEC_END_MODEL_ID = 0xFFFF
+SUNSPEC_MAX_MODELS = 32
+SUNSPEC_BATTERY_MODEL_ID = 802
+# Offsets within model 802, counted from its first point after the ID and length
+SUNSPEC_BATTERY_VMAX_OFFSET = 33
+SUNSPEC_BATTERY_V_SF_OFFSET = 57
+# A value outside this range is not a usable maximum voltage: 0 without a
+# battery, 0xFFFF when not implemented
+BATTERY_MAX_VOLTAGE_RANGE = (100.0, 1000.0)
+KEY_BATTERY_MAX_VOLTAGE_SUNSPEC = "battery_max_voltage_sunspec"
 # What the maximum battery control power is based on, shown by the
 # Battery Max Control Power Source sensor
+MAX_POWER_SOURCE_SUNSPEC = "Reported by the inverter (SunSpec)"
 MAX_POWER_SOURCE_LEARNED = "Learned after full charge"
 MAX_POWER_SOURCE_INVERTER_MAX_POWER = "Inverter max power (waiting for full charge)"
 MAX_POWER_SOURCE_BATTERY_VOLTAGE = "Battery voltage (waiting for full charge)"
