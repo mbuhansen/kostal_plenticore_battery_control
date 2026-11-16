@@ -49,3 +49,13 @@ class KostalPredbatConfigButton(ButtonEntity):
             title="Predbat configuration",
             notification_id=f"{DOMAIN}_{self._entry.entry_id}_predbat_config",
         )
+        # The notification only shows under Notifications, so say where to find it
+        self.hass.bus.async_fire(
+            "logbook_entry",
+            {
+                "name": str(self.name),
+                "message": "Predbat configuration is ready under Notifications",
+                "domain": DOMAIN,
+                "entity_id": self.entity_id,
+            },
+        )

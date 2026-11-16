@@ -186,7 +186,7 @@ Deadband, hysteresis and smoothing work together: the grid settles within roughl
 
 ### Buttons
 
-*   **Show Predbat Configuration** *(Configuration category)*: Shows a notification with the `apps.yaml` settings Predbat needs for this inverter: the inverter definition, the charge and discharge services, the sensors and the power limits. All entities come from this integration and are found by unique ID, so renamed entities are found too. Anything that is not found, or is disabled, is shown as a comment saying what is needed. Energy is given as counters that only increase, which Predbat handles as well as daily ones. With a KSEM set up, its home consumption is used for the load, as it covers every inverter on the meter. The integration does not write `apps.yaml` itself; copy the settings in and check them before Predbat controls the inverter.
+*   **Show Predbat Configuration** *(Configuration category)*: Shows a notification with the `apps.yaml` settings Predbat needs for this inverter: the inverter definition, the charge and discharge services, the sensors and the power limits. All entities come from this integration and are found by unique ID, so renamed entities are found too. Anything that is not found, or is disabled, is shown as a comment saying what is needed. Energy is given as counters that only increase, which Predbat handles as well as daily ones. With a KSEM set up, its home consumption is used for the load, as it covers every inverter on the meter. The notification is found under Notifications in the sidebar, and the Activity log says it is ready. The integration does not write `apps.yaml` itself; copy the settings in and check them before Predbat controls the inverter.
 
 ### Numbers (Settings)
 
