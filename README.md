@@ -184,6 +184,10 @@ Deadband, hysteresis and smoothing work together: the grid settles within roughl
 | Inverter Control Target Power | Current battery setpoint in W (+ discharge, − charge), as written to the register |
 | Inverter Control House Load | The smoothed house load (grid + battery) the control regulates on |
 
+### Buttons
+
+*   **Show Predbat Configuration** *(Configuration category)*: Shows a notification with the `apps.yaml` settings Predbat needs for this inverter: the inverter definition, the charge and discharge services, the sensors and the power limits. All entities come from this integration and are found by unique ID, so renamed entities are found too. Anything that is not found, or is disabled, is shown as a comment saying what is needed. Energy is given as counters that only increase, which Predbat handles as well as daily ones. With a KSEM set up, its home consumption is used for the load, as it covers every inverter on the meter. The integration does not write `apps.yaml` itself; copy the settings in and check them before Predbat controls the inverter.
+
 ### Numbers (Settings)
 
 *   **Set Charge Rate / Set Discharge Rate:** Target power in Watts for forced charging and discharging. A rate starts out following the maximum battery control power (the `Battery Max Control Power` sensor), rounded up to the next 100 W. It does not move with the state of charge: the full nominal battery current is always requested, and the inverter clamps the setpoint to what the battery can take at its actual voltage. Set a lower value and that value is kept, also across restarts; set it to the maximum or above and it follows the maximum again. The `follows_max` attribute shows which applies. A fixed value above the current maximum is clamped when written.
@@ -249,6 +253,12 @@ want to watch this happen. Each limit entity also exposes `active` and `writing`
 | Battery Max Voltage | V | Battery maximum voltage in use (hybrid only): the one the inverter reports through SunSpec, or else the one learned at a full charge. Unknown until one of them is available |
 | Predbat Status | — | What Predbat control is currently doing |
 | Predbat Mode | — | Whether Predbat is installed and in an active control mode |
+| PV Power | W | DC power of all PV inputs (register `1066`) |
+| Home Power | W | Home consumption: what the home takes from battery, grid and PV (registers `106` + `108` + `116`) |
+| Home Consumption Total | kWh | Total home consumption (register `118`) |
+| PV Energy Total | kWh | DC energy of all PV inputs (register `1056`). The inverter's yield registers are its AC output, battery discharge included, so they are not used for PV |
+| Grid Import Energy / Grid Export Energy | kWh | Total grid energy from the inverter's meter (registers `40354` / `40346`). Not available on a PLENTICORE plus G1 |
+| Predbat Best SOC Max | kWh | The `Battery Maximum SOC Limit` as energy, for `input_number.predbat_best_soc_max`, so Predbat plans with the same maximum as the inverter. It is the battery's full size at 100 %. The size is the one Predbat calculates from what goes into the battery (`sensor.predbat_soc_max_calculated`), as Predbat reads the value on that scale. Without it the sensor is unknown: the capacity the inverter reports can be the gross size. Attributes show the size and the maximum SOC |
 
 ### Diagnostic Sensors (disabled by default)
 

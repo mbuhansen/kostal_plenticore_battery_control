@@ -47,6 +47,22 @@ from .const import (
     REG_BATTERY_MAX_CHARGE_POWER_W,
     REG_BATTERY_MAX_DISCHARGE_POWER_W,
     REG_BATTERY_WORK_CAPACITY,
+    PREDBAT_CAPACITY_ENTITY,
+    REG_HOME_FROM_BATTERY_W,
+    REG_HOME_FROM_GRID_W,
+    REG_HOME_FROM_PV_W,
+    REG_HOME_CONSUMPTION_TOTAL_WH,
+    REG_PV_ENERGY_TOTAL_WH,
+    REG_PV_POWER_W,
+    REG_GRID_ENERGY_EXPORTED_WH,
+    REG_GRID_ENERGY_IMPORTED_WH,
+    SENSOR_PV_POWER,
+    SENSOR_HOME_POWER,
+    SENSOR_HOME_CONSUMPTION_TOTAL,
+    SENSOR_PV_ENERGY_TOTAL,
+    SENSOR_GRID_ENERGY_IMPORTED_TOTAL,
+    SENSOR_GRID_ENERGY_EXPORTED_TOTAL,
+    SENSOR_PREDBAT_BEST_SOC_MAX,
     REG_BATTERY_MGMT_MODE,
     BATTERY_MGMT_MODE_MAP,
     REG_SOFTWARE_VERSION,
@@ -179,6 +195,13 @@ async def async_setup_entry(
         KostalEMSChargeLimitSensor(data, entry.entry_id),
         KostalPredbatStatusSensor(data, entry.entry_id),
         KostalPredbatModeSensor(data, entry.entry_id),
+        KostalPredbatBestSocMaxSensor(coordinator, data, entry.entry_id),
+        KostalPvPowerSensor(coordinator, entry.entry_id),
+        KostalHomePowerSensor(coordinator, entry.entry_id),
+        KostalHomeConsumptionTotalSensor(coordinator, entry.entry_id),
+        KostalPvEnergyTotalSensor(coordinator, entry.entry_id),
+        KostalGridEnergyImportedTotalSensor(coordinator, entry.entry_id),
+        KostalGridEnergyExportedTotalSensor(coordinator, entry.entry_id),
         # Diagnostic sensors (disabled by default)
         KostalInverterStateSensor(coordinator, entry.entry_id),
         KostalInverterStateTextSensor(coordinator, entry.entry_id),
@@ -826,6 +849,128 @@ class KostalBatteryWorkCapacitySensor(KostalBaseSensor):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_entity_registry_enabled_default = False
+
+
+class KostalPredbatBestSocMaxSensor(KostalBaseSensor):
+    """Battery Maximum SOC Limit as kWh, for input_number.predbat_best_soc_max.
+
+    The battery's full size at 100 %, using the size Predbat calculates, as Predbat
+    reads the value on that scale. Unknown without it: the capacity the inverter
+    reports can be the gross size, and differs between batteries.
+    """
+
+    _key = SENSOR_PREDBAT_BEST_SOC_MAX
+    _name = "Predbat Best SOC Max"
+    _address = REG_BATTERY_SOC  # Not read directly — native_value is computed
+    _attr_device_class = SensorDeviceClass.ENERGY_STORAGE
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_suggested_display_precision = 2
+    _attr_icon = "mdi:battery-arrow-up-outline"
+
+    def __init__(self, coordinator: KostalCoordinator, data, entry_id: str) -> None:
+        super().__init__(coordinator, entry_id)
+        self._data = data
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            async_track_state_change_event(
+                self.hass, [PREDBAT_CAPACITY_ENTITY], lambda event: self.async_write_ha_state()
+            )
+        )
+
+    def _capacity(self) -> float | None:
+        """Battery size in kWh as Predbat calculates it, or None."""
+        state = self.hass.states.get(PREDBAT_CAPACITY_ENTITY) if self.hass else None
+        if state is None:
+            return None
+        try:
+            capacity = float(state.state)
+        except (ValueError, TypeError):
+            return None
+        return capacity if capacity > 0.0 else None
+
+    @property
+    def native_value(self):
+        capacity = self._capacity()
+        if capacity is None:
+            return None
+        return round(capacity * self._data.max_soc / 100.0, 2)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        capacity = self._capacity()
+        return {
+            "battery_capacity_kwh": round(capacity, 2) if capacity is not None else None,
+            "max_soc_percent": self._data.max_soc,
+        }
+
+
+class KostalPvPowerSensor(KostalBaseSensor):
+    """PV power, the DC power of all PV inputs."""
+
+    _key = SENSOR_PV_POWER
+    _name = "PV Power"
+    _address = REG_PV_POWER_W
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+
+class KostalHomePowerSensor(KostalBaseSensor):
+    """Home consumption: the sum of what the home takes from battery, grid and PV."""
+
+    _key = SENSOR_HOME_POWER
+    _name = "Home Power"
+    _address = REG_HOME_FROM_GRID_W  # Not read alone — native_value is the sum
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    @property
+    def native_value(self):
+        data = self.coordinator.data
+        if data is None:
+            return None
+        parts = [data.get(a) for a in (REG_HOME_FROM_BATTERY_W, REG_HOME_FROM_GRID_W, REG_HOME_FROM_PV_W)]
+        if any(part is None for part in parts):
+            return None
+        return round(sum(parts), 2)
+
+
+class KostalEnergyTotalSensor(KostalBaseSensor):
+    """An energy counter in Wh that only increases."""
+
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_native_unit_of_measurement = UnitOfEnergy.WATT_HOUR
+    _attr_suggested_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+
+
+class KostalHomeConsumptionTotalSensor(KostalEnergyTotalSensor):
+    _key = SENSOR_HOME_CONSUMPTION_TOTAL
+    _name = "Home Consumption Total"
+    _address = REG_HOME_CONSUMPTION_TOTAL_WH
+
+
+class KostalPvEnergyTotalSensor(KostalEnergyTotalSensor):
+    """PV energy, the DC energy of all PV inputs — not the AC yield, which includes battery discharge."""
+
+    _key = SENSOR_PV_ENERGY_TOTAL
+    _name = "PV Energy Total"
+    _address = REG_PV_ENERGY_TOTAL_WH
+
+
+class KostalGridEnergyImportedTotalSensor(KostalEnergyTotalSensor):
+    _key = SENSOR_GRID_ENERGY_IMPORTED_TOTAL
+    _name = "Grid Import Energy"
+    _address = REG_GRID_ENERGY_IMPORTED_WH
+
+
+class KostalGridEnergyExportedTotalSensor(KostalEnergyTotalSensor):
+    _key = SENSOR_GRID_ENERGY_EXPORTED_TOTAL
+    _name = "Grid Export Energy"
+    _address = REG_GRID_ENERGY_EXPORTED_WH
 
 
 class KostalBatteryMgmtModeSensor(KostalBaseSensor):
