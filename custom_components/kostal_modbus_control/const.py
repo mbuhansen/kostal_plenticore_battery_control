@@ -97,6 +97,19 @@ REG_IO_OUTPUT_4 = 611             # I/O-Board Switched Output 4 - U16 (0x263) RW
 
 # Read-Only Registers (Battery Data)
 REG_BATTERY_SOC = 210             # Act. state of charge (%) - Float (0xD2)
+# Home consumption and PV, used by Predbat. Floats, like the registers above.
+REG_HOME_FROM_BATTERY_W = 106     # Home own consumption from battery (W)
+REG_HOME_FROM_GRID_W = 108        # Home own consumption from grid (W)
+REG_HOME_FROM_PV_W = 116          # Home own consumption from PV (W)
+REG_HOME_CONSUMPTION_TOTAL_WH = 118  # Total home consumption (Wh)
+REG_PV_ENERGY_TOTAL_WH = 1056     # Total DC PV energy, sum of all PV inputs (Wh)
+REG_PV_POWER_W = 1066             # Total DC power, sum of all PV inputs (W)
+# Total yield (320) and daily yield (322) are the inverter's AC output, battery
+# discharge included, so PV energy comes from 1056 instead.
+# Grid energy from the inverter's meter model (SunSpec 203), U32 big-endian.
+# G2 from SW 02.12, G3 from 3.04.01; a G1 does not have it.
+REG_GRID_ENERGY_EXPORTED_WH = 40346
+REG_GRID_ENERGY_IMPORTED_WH = 40354
 REG_BATTERY_TEMP = 214            # Battery Temperature (°C) - Float (0xD6)
 REG_BATTERY_VOLTAGE = 216         # Battery Voltage (V) - Float (0xD8)
 REG_BATTERY_CURRENT = 200         # Actual battery charge (-) / discharge (+) current (A) - Float (0xC8)
@@ -225,6 +238,13 @@ SENSOR_EMS_STATUS = "ems_status"
 SENSOR_EMS_CHARGE_LIMIT_POWER = "ems_charge_limit_power"
 SENSOR_PREDBAT_STATUS = "predbat_status"
 SENSOR_PREDBAT_MODE = "predbat_mode"
+SENSOR_PREDBAT_BEST_SOC_MAX = "predbat_best_soc_max"
+SENSOR_PV_POWER = "pv_power"
+SENSOR_HOME_POWER = "home_power"
+SENSOR_HOME_CONSUMPTION_TOTAL = "home_consumption_total"
+SENSOR_PV_ENERGY_TOTAL = "pv_energy_total"
+SENSOR_GRID_ENERGY_IMPORTED_TOTAL = "grid_energy_imported_total"
+SENSOR_GRID_ENERGY_EXPORTED_TOTAL = "grid_energy_exported_total"
 SENSOR_BATTERY_DC_POWER_SETPOINT = "battery_dc_power_setpoint"
 SENSOR_BATTERY_AC_POWER_SETPOINT = "battery_ac_power_setpoint"
 SENSOR_BATTERY_MAX_CONTROL_POWER = "battery_max_control_power"
@@ -340,6 +360,11 @@ CONTROL_SETTLE_MARGIN_SECONDS = 15.0
 # reserve's resting value Predbat is asking for a hold at that SOC.
 PREDBAT_RESERVE_ENTITY = "input_number.predbat_reserve"
 PREDBAT_RESERVE_INACTIVE_PERCENT = 5.0
+# Battery size Predbat calculates from what it measures going into the battery.
+# input_number.predbat_best_soc_max is in kWh on Predbat's own scale, so the
+# Battery Maximum SOC Limit is converted with this size, and is unknown without
+# it: the capacity the inverter reports can be the gross size.
+PREDBAT_CAPACITY_ENTITY = "sensor.predbat_soc_max_calculated"
 # Predbat only raises the reserve with Set Reserve on, so it is turned on while
 # Predbat is in an active control mode.
 PREDBAT_SET_RESERVE_ENTITY = "switch.predbat_set_reserve_enable"
@@ -363,6 +388,7 @@ PREDBAT_LOW_POWER_RESUME_TOLERANCE_FRACTION = 0.05
 PREDBAT_LOW_POWER_RESUME_TOLERANCE_FRACTION_BI = 0.15
 
 # Entity descriptions (Switches)
+BUTTON_PREDBAT_CONFIG = "predbat_config"
 SWITCH_CHARGE_START = "charge_start"
 SWITCH_DISCHARGE_START = "discharge_start"
 SWITCH_BLOCK_CHARGE = "block_charge"

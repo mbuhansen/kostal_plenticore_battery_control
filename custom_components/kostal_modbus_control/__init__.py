@@ -105,6 +105,14 @@ from .const import (
     REG_ACTIVE_POWER_PHASE1,
     REG_ACTIVE_POWER_PHASE2,
     REG_ACTIVE_POWER_PHASE3,
+    REG_HOME_FROM_BATTERY_W,
+    REG_HOME_FROM_GRID_W,
+    REG_HOME_FROM_PV_W,
+    REG_HOME_CONSUMPTION_TOTAL_WH,
+    REG_PV_ENERGY_TOTAL_WH,
+    REG_PV_POWER_W,
+    REG_GRID_ENERGY_EXPORTED_WH,
+    REG_GRID_ENERGY_IMPORTED_WH,
     REG_SENSOR_TYPE,
     CONF_KSEM_HOST,
     KSEM_PORT,
@@ -307,6 +315,12 @@ class KostalCoordinator(DataUpdateCoordinator[dict[Any, Any]]):
                 REG_ACTIVE_POWER_PHASE1,
                 REG_ACTIVE_POWER_PHASE2,
                 REG_ACTIVE_POWER_PHASE3,
+                REG_HOME_FROM_BATTERY_W,
+                REG_HOME_FROM_GRID_W,
+                REG_HOME_FROM_PV_W,
+                REG_HOME_CONSUMPTION_TOTAL_WH,
+                REG_PV_ENERGY_TOTAL_WH,
+                REG_PV_POWER_W,
             ):
                 data[address] = await self._read_optional(
                     address,
@@ -345,6 +359,17 @@ class KostalCoordinator(DataUpdateCoordinator[dict[Any, Any]]):
                 ),
                 # U16 register
                 (REG_BATTERY_TYPE, "battery type", partial(self._handler.read_uint16, REG_BATTERY_TYPE)),
+                # Grid energy from the inverter's meter model, big-endian like SunSpec
+                (
+                    REG_GRID_ENERGY_IMPORTED_WH,
+                    "grid energy imported",
+                    partial(self._handler.read_uint32_big_endian, REG_GRID_ENERGY_IMPORTED_WH),
+                ),
+                (
+                    REG_GRID_ENERGY_EXPORTED_WH,
+                    "grid energy exported",
+                    partial(self._handler.read_uint32_big_endian, REG_GRID_ENERGY_EXPORTED_WH),
+                ),
                 # String register — byte order is fixed, no word swap involved.
                 # PLENTICORE plus G1 does not implement this one at all.
                 (
@@ -408,7 +433,7 @@ class KostalCoordinator(DataUpdateCoordinator[dict[Any, Any]]):
             raise UpdateFailed(f"Error communicating with Kostal inverter: {err}") from err
 
 
-PLATFORMS: list[Platform] = [Platform.SWITCH, Platform.NUMBER, Platform.SENSOR]
+PLATFORMS: list[Platform] = [Platform.SWITCH, Platform.NUMBER, Platform.SENSOR, Platform.BUTTON]
 
 @dataclass
 class KostalData:
