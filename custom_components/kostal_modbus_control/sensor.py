@@ -875,9 +875,14 @@ class KostalPredbatBestSocMaxSensor(KostalBaseSensor):
         await super().async_added_to_hass()
         self.async_on_remove(
             async_track_state_change_event(
-                self.hass, [PREDBAT_CAPACITY_ENTITY], lambda event: self.async_write_ha_state()
+                self.hass, [PREDBAT_CAPACITY_ENTITY], self._handle_capacity_change
             )
         )
+
+    @callback
+    def _handle_capacity_change(self, event) -> None:
+        """Refresh when Predbat's battery size changes (runs in the event loop)."""
+        self.async_write_ha_state()
 
     def _capacity(self) -> float | None:
         """Battery size in kWh as Predbat calculates it, or None."""
