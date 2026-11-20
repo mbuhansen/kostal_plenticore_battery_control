@@ -192,7 +192,7 @@ Deadband, hysteresis and smoothing work together: the grid settles within roughl
 
 *   **Set Charge Rate / Set Discharge Rate:** Target power in Watts for forced charging and discharging. A rate starts out following the maximum battery control power (the `Battery Max Control Power` sensor), rounded up to the next 100 W. It does not move with the state of charge: the full nominal battery current is always requested, and the inverter clamps the setpoint to what the battery can take at its actual voltage. Set a lower value and that value is kept, also across restarts; set it to the maximum or above and it follows the maximum again. The `follows_max` attribute shows which applies. A fixed value above the current maximum is clamped when written.
 *   **House Fuse Size** *(Configuration category)*: The size of your house fuses in Ampere (A). Used by EMS Grid Protection to calculate safe charge headroom.
-*   **Battery Minimum SOC Limit:** 5–100%. `5` means not in use — that is the inverter's own minimum.
+*   **Battery Minimum SOC Limit:** from the inverter's own minimum SOC up to 100%. Its own minimum means not in use. See [the inverter's own minimum SOC](#the-inverters-own-minimum-soc).
 *   **Battery Maximum SOC Limit:** 5–100%. `100` means not in use — that is the inverter's own maximum.
 
 Both SOC limits are enabled by default. If you do not see them on the device page, enable them there.
@@ -200,8 +200,7 @@ Both SOC limits are enabled by default. If you do not see them on the device pag
 ### Battery SOC Limits
 
 Registers `1042`/`1044` are governed by the inverter's Modbus timeout: a limit is only in effect while
-it is actively being sent, and the inverter reverts to its own settings (minimum 5%, maximum 100%) as
-soon as the writes stop. A limit that is in use is therefore written **continuously**, from the moment
+it is actively being sent, and the inverter reverts to its own settings as soon as the writes stop. A limit that is in use is therefore written **continuously**, from the moment
 you set it, every `inverter timeout / 2` seconds (minimum 5s — the same cadence as the charge/discharge
 loops). Set the maximum to 50% and the inverter holds 50% for as long as the entity says 50%, whatever
 the battery is doing:
@@ -210,7 +209,7 @@ the battery is doing:
     or already above the limit. Charging stops at the limit and stays stopped.
 *   **Minimum SOC** — mirrored on `1042`: discharging stops at the limit and stays stopped.
 
-Setting a limit back to `100` (maximum) or `5` (minimum) means "not in use": that value is written once,
+Setting a limit back to `100` (maximum) or the inverter's own minimum means "not in use": that value is written once,
 so the release takes effect immediately rather than after the inverter's timeout expires, and nothing is
 sent afterwards. While a discharge hold is active (`Block Discharge` or a Predbat hold), the minimum SOC
 sends the hold's value instead.
@@ -230,6 +229,22 @@ again. A limit set back to "not in use" during that wait is sent once the wait i
 
 The `Battery Minimum SOC` / `Battery Maximum SOC` diagnostic sensors read the registers back if you
 want to watch this happen. Each limit entity also exposes `active` and `writing` attributes.
+
+#### The inverter's own minimum SOC
+
+The minimum SOC set in the inverter's web UI is the lowest the integration ever writes to `1042`. The
+inverter can also raise it by itself to protect the battery. This applies to the minimum SOC limit, to
+`Block Discharge`, to the Predbat holds and to every release. When `1042` is read while nothing has
+been written for `Modbus timeout + 15s`, it shows the inverter's own setting, and the integration takes
+that as the inverter's own minimum. It is saved across restarts, and the `inverter_min_soc` attribute
+of `Battery Minimum SOC Limit` shows it. Until the integration has read it, 5% is used.
+
+While the integration writes continuously, for example during a charge or a Predbat hold, `1042`
+shows the integration's own value. A change in the web UI is then picked up the next time nothing
+is written for that long.
+
+Changing the minimum SOC limit does not change the inverter's own minimum. To go below it, lower it
+in the inverter's web UI.
 
 ### Sensors (Read-Only)
 
