@@ -175,6 +175,10 @@ class KostalCoordinator(DataUpdateCoordinator[dict[Any, Any]]):
         self._rest_version: str | None = None
         self._rest_version_next_try = 0.0
         self._rest_version_logged_failure = False
+        # Values that only change with a battery swap or a firmware update —
+        # both restart the inverter, i.e. a communication outage. Read once per
+        # connection rather than on every poll; None means "read on next poll".
+        self._static_data: dict | None = None
 
     async def _read_optional(self, key, description, read):
         """Read a register that some inverter models may not implement.
@@ -270,6 +274,52 @@ class KostalCoordinator(DataUpdateCoordinator[dict[Any, Any]]):
         _LOGGER.debug("Software version %s read from %s", self._rest_version, url)
         return self._rest_version
 
+    async def _async_read_static_data(self) -> dict:
+        """Read the registers that do not change while the inverter runs."""
+        data: dict = {}
+        for key, description, read in (
+            (REG_SENSOR_TYPE, "sensor type", partial(self._handler.read_uint8, REG_SENSOR_TYPE)),
+            # The battery info block is big-endian regardless of the inverter's
+            # byte-order setting, unlike the floats and the state register
+            (
+                KEY_BATTERY_GROSS_CAPACITY,
+                "battery gross capacity",
+                partial(self._handler.read_uint32_big_endian, REG_BATTERY_GROSS_CAPACITY),
+            ),
+            (
+                REG_BATTERY_MODEL_ID,
+                "battery model ID",
+                partial(self._handler.read_uint32_big_endian, REG_BATTERY_MODEL_ID),
+            ),
+            (
+                REG_BATTERY_BMS_SERIAL,
+                "battery BMS serial",
+                partial(self._handler.read_uint32_big_endian, REG_BATTERY_BMS_SERIAL),
+            ),
+            (
+                REG_BATTERY_FIRMWARE,
+                "battery firmware",
+                partial(self._handler.read_uint32_big_endian, REG_BATTERY_FIRMWARE),
+            ),
+            # U16 register
+            (REG_BATTERY_TYPE, "battery type", partial(self._handler.read_uint16, REG_BATTERY_TYPE)),
+            # String register — byte order is fixed, no word swap involved.
+            # PLENTICORE plus G1 does not implement this one at all.
+            (
+                REG_SOFTWARE_VERSION,
+                f"the software version register {REG_SOFTWARE_VERSION}",
+                partial(self._handler.read_string, REG_SOFTWARE_VERSION, SOFTWARE_VERSION_LENGTH),
+            ),
+        ):
+            data[key] = await self._read_optional(key, description, read)
+        if not self._kostal_data.is_battery_inverter:
+            data[KEY_BATTERY_MAX_VOLTAGE_SUNSPEC] = await self._read_optional(
+                KEY_BATTERY_MAX_VOLTAGE_SUNSPEC,
+                "the SunSpec battery model",
+                self._async_read_sunspec_battery_max_voltage,
+            )
+        return data
+
     async def _async_update_data(self) -> dict:
         try:
             # First poll after an outage: re-probe everything. A register refused
@@ -288,7 +338,12 @@ class KostalCoordinator(DataUpdateCoordinator[dict[Any, Any]]):
                 self._rest_version_next_try = 0.0
                 # So does the model list, which a firmware update can change
                 self._sunspec_battery_model_address = None
-            data: dict = {}
+                # And every other static value, which a battery swap or a
+                # firmware update — each an outage — can change
+                self._static_data = None
+            if self._static_data is None:
+                self._static_data = await self._async_read_static_data()
+            data: dict = dict(self._static_data)
             # Float registers (2 registers each)
             for address in (
                 REG_TOTAL_ACTIVE_POWER,
@@ -330,35 +385,10 @@ class KostalCoordinator(DataUpdateCoordinator[dict[Any, Any]]):
             for key, description, read in (
                 # S16 register (1 register, signed int)
                 (REG_BATTERY_POWER, "battery power", partial(self._handler.read_int16, REG_BATTERY_POWER)),
-                # U8 registers
-                (REG_SENSOR_TYPE, "sensor type", partial(self._handler.read_uint8, REG_SENSOR_TYPE)),
+                # U8 register
                 (REG_BATTERY_MGMT_MODE, "battery management mode", partial(self._handler.read_uint8, REG_BATTERY_MGMT_MODE)),
                 # U32 register
                 (REG_INVERTER_STATE, "inverter state", partial(self._handler.read_uint32, REG_INVERTER_STATE)),
-                # The battery info block is big-endian regardless of the inverter's
-                # byte-order setting, unlike the state register above
-                (
-                    KEY_BATTERY_GROSS_CAPACITY,
-                    "battery gross capacity",
-                    partial(self._handler.read_uint32_big_endian, REG_BATTERY_GROSS_CAPACITY),
-                ),
-                (
-                    REG_BATTERY_MODEL_ID,
-                    "battery model ID",
-                    partial(self._handler.read_uint32_big_endian, REG_BATTERY_MODEL_ID),
-                ),
-                (
-                    REG_BATTERY_BMS_SERIAL,
-                    "battery BMS serial",
-                    partial(self._handler.read_uint32_big_endian, REG_BATTERY_BMS_SERIAL),
-                ),
-                (
-                    REG_BATTERY_FIRMWARE,
-                    "battery firmware",
-                    partial(self._handler.read_uint32_big_endian, REG_BATTERY_FIRMWARE),
-                ),
-                # U16 register
-                (REG_BATTERY_TYPE, "battery type", partial(self._handler.read_uint16, REG_BATTERY_TYPE)),
                 # Grid energy from the inverter's meter model, big-endian like SunSpec
                 (
                     REG_GRID_ENERGY_IMPORTED_WH,
@@ -370,23 +400,12 @@ class KostalCoordinator(DataUpdateCoordinator[dict[Any, Any]]):
                     "grid energy exported",
                     partial(self._handler.read_uint32_big_endian, REG_GRID_ENERGY_EXPORTED_WH),
                 ),
-                # String register — byte order is fixed, no word swap involved.
-                # PLENTICORE plus G1 does not implement this one at all.
-                (
-                    REG_SOFTWARE_VERSION,
-                    f"the software version register {REG_SOFTWARE_VERSION}",
-                    partial(self._handler.read_string, REG_SOFTWARE_VERSION, SOFTWARE_VERSION_LENGTH),
-                ),
             ):
                 data[key] = await self._read_optional(key, description, read)
+            # Register 58 refused: the REST fallback keeps its own retry timer
+            # and returns the cached version in between, so ask it every poll
             if REG_SOFTWARE_VERSION in self._unsupported:
                 data[REG_SOFTWARE_VERSION] = await self._async_rest_software_version()
-            if not self._kostal_data.is_battery_inverter:
-                data[KEY_BATTERY_MAX_VOLTAGE_SUNSPEC] = await self._read_optional(
-                    KEY_BATTERY_MAX_VOLTAGE_SUNSPEC,
-                    "the SunSpec battery model",
-                    self._async_read_sunspec_battery_max_voltage,
-                )
             self._kostal_data.update_observed_battery_current(data)
             # KSEM energy registers (separate handler, optional)
             ksem = self._kostal_data.ksem_handler
