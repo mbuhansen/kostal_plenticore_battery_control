@@ -3,6 +3,7 @@ import math
 import struct
 import asyncio
 import inspect
+import time
 from pymodbus.client import AsyncModbusTcpClient
 
 
@@ -40,6 +41,11 @@ class KostalModbusHandler:
         self._unit_kwarg = None  # Detected at first use
         self._operation_timeout = 15.0
         self._word_swapped_32bit = True
+        # When anything was last written. Every write restarts the inverter's
+        # external control timeout, so registers only show the inverter's own
+        # settings once it has expired. Starts at "now": after a reload a write
+        # from the previous session may still be in force.
+        self.last_write_time = time.time()
 
     def set_modbus_byte_order(self, byte_order):
         """Apply inverter Modbus byte-order setting for 32-bit values."""
@@ -277,7 +283,7 @@ class KostalModbusHandler:
     async def write_float(self, address, value):
         """Writes a float value to two 16-bit registers."""
         registers = self._float_to_register_words(value)
-        
+        self.last_write_time = time.time()
         await self._run_locked_request(
             f"write float to {address}",
             lambda: self._safe_write(address, registers),
@@ -285,6 +291,7 @@ class KostalModbusHandler:
 
     async def write_registers(self, address, values):
         """Writes raw register values."""
+        self.last_write_time = time.time()
         await self._run_locked_request(
             f"write registers to {address}",
             lambda: self._safe_write(address, values),
@@ -292,6 +299,7 @@ class KostalModbusHandler:
 
     async def write_register(self, address, value):
         """Writes a single 16-bit register using Modbus function 0x06."""
+        self.last_write_time = time.time()
         await self._run_locked_request(
             f"write single register to {address}",
             lambda: self._safe_write_single(address, value),

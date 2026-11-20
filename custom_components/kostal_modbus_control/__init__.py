@@ -89,6 +89,7 @@ from .const import (
     REG_BATTERY_MIN_SOC,
     REG_BATTERY_MAX_SOC,
     DEFAULT_MIN_SOC_LIMIT,
+    MIN_SOC_LIMIT_RANGE,
     DEFAULT_MAX_SOC_LIMIT,
     DEFAULT_HOLD_SOC_OFFSET,
     HOLD_SOC_OFFSET_RANGE,
@@ -407,6 +408,7 @@ class KostalCoordinator(DataUpdateCoordinator[dict[Any, Any]]):
             if REG_SOFTWARE_VERSION in self._unsupported:
                 data[REG_SOFTWARE_VERSION] = await self._async_rest_software_version()
             self._kostal_data.update_observed_battery_current(data)
+            self._kostal_data.observe_inverter_min_soc(data.get(REG_BATTERY_MIN_SOC))
             # KSEM energy registers (separate handler, optional)
             ksem = self._kostal_data.ksem_handler
             if ksem is not None:
@@ -487,6 +489,10 @@ class KostalData:
     # inverter's own limits, i.e. "not in use". The number entities own the
     # register writes — see KostalSocLimitNumber in number.py.
     min_soc: float = DEFAULT_MIN_SOC_LIMIT
+    # The inverter's own min SOC (set in its web UI, which may also raise it to
+    # protect the battery), read from 1042 while nothing is written. Every min
+    # SOC the integration writes is at least this — see min_soc_floor.
+    inverter_min_soc: float | None = None
     # Min SOC a discharge hold asks for (Block Discharge or Predbat's reserve
     # hold), None when no hold is active — see KostalBaseSwitch._hold_discharge_at
     discharge_hold_min_soc: float | None = None
@@ -588,6 +594,7 @@ class KostalData:
             "battery_voltage_peak": self.battery_voltage_peak,
             "battery_max_voltage_learned": self.battery_max_voltage_learned,
             "battery_max_voltage_learned_at": self.battery_max_voltage_learned_at,
+            "inverter_min_soc": self.inverter_min_soc,
         }
 
     def load_storage_data(self, stored: dict[str, Any] | None) -> None:
@@ -598,6 +605,37 @@ class KostalData:
         self.battery_voltage_peak = stored.get("battery_voltage_peak")
         self.battery_max_voltage_learned = stored.get("battery_max_voltage_learned")
         self.battery_max_voltage_learned_at = stored.get("battery_max_voltage_learned_at")
+        self.inverter_min_soc = stored.get("inverter_min_soc")
+
+    def observe_inverter_min_soc(self, value: float | None) -> bool:
+        """Learn the inverter's own min SOC from 1042, once nothing has been written for a while.
+
+        Any write keeps the inverter in external control, where 1042 still shows
+        the last value written, so it only shows the inverter's own setting once
+        the timeout has expired. Returns True when the learned value changed.
+        """
+        if value is None or not MIN_SOC_LIMIT_RANGE[0] <= value <= MIN_SOC_LIMIT_RANGE[1]:
+            return False
+        if time.time() - self.handler.last_write_time < self.control_settle_seconds():
+            return False
+        value = round(value, 1)
+        if self.inverter_min_soc == value:
+            return False
+        _LOGGER.info(
+            "Inverter's own minimum SOC is %.0f%% (was %s) — the integration never writes a lower min SOC",
+            value,
+            "unknown" if self.inverter_min_soc is None else f"{self.inverter_min_soc:.0f}%",
+        )
+        self.inverter_min_soc = value
+        if self.store is not None:
+            self.store.async_delay_save(self._storage_data, STORAGE_SAVE_DELAY_SECONDS)
+        return True
+
+    def min_soc_floor(self) -> float:
+        """Lowest min SOC the integration writes: the inverter's own, or 5 % while it is unknown."""
+        if self.inverter_min_soc is None:
+            return DEFAULT_MIN_SOC_LIMIT
+        return max(DEFAULT_MIN_SOC_LIMIT, self.inverter_min_soc)
 
     def documented_battery_nominal_current(self) -> float | None:
         """Documented nominal battery current of the inverter generation, or None when unknown."""
@@ -730,17 +768,24 @@ class KostalData:
         return min(100.0, soc_percent + self.hold_soc_offset)
 
     def effective_min_soc(self) -> float:
-        """Min SOC for 1042: the user's limit or a discharge hold, whichever is higher.
+        """Min SOC for 1042: the inverter's own, the user's limit or a discharge hold, whichever is highest.
 
         A hold on 1040 leaves 1042 to the user's limit, unless its guard is active.
+        With nothing in use this is the inverter's own min SOC, so a release never
+        writes a lower one.
         """
+        value = max(self.min_soc_floor(), self.min_soc)
         if self.hold_use_discharge_limit:
             if self.discharge_limit_guard_soc is None:
-                return self.min_soc
-            return max(self.min_soc, self.discharge_limit_guard_soc)
+                return value
+            return max(value, self.discharge_limit_guard_soc)
         if self.discharge_hold_min_soc is None:
-            return self.min_soc
-        return max(self.min_soc, self.discharge_hold_min_soc)
+            return value
+        return max(value, self.discharge_hold_min_soc)
+
+    async def async_write_min_soc(self) -> None:
+        """Write effective_min_soc() to 1042."""
+        await self.handler.write_float(REG_BATTERY_MIN_SOC, self.effective_min_soc())
 
     async def async_restore_discharge_limit(self) -> None:
         """Write the battery's maximum back to 1040 if a hold blocked it, or if it reads as blocked."""
@@ -775,7 +820,7 @@ class KostalData:
         """
         self.discharge_hold_min_soc = soc_percent
         if not self.hold_use_discharge_limit:
-            await self.handler.write_float(REG_BATTERY_MIN_SOC, self.effective_min_soc())
+            await self.async_write_min_soc()
             return
         data = self.coordinator.data if self.coordinator is not None else None
         soc = data.get(REG_BATTERY_SOC) if data else None
@@ -790,7 +835,7 @@ class KostalData:
         await self.handler.write_float(REG_BATTERY_MAX_DISCHARGE_POWER_W, 0.0)
         self._update_limit_guard(soc, data.get(REG_BATTERY_POWER) if data else None)
         if self.discharge_limit_guard_soc is not None:
-            await self.handler.write_float(REG_BATTERY_MIN_SOC, self.effective_min_soc())
+            await self.async_write_min_soc()
 
     def _update_limit_guard(self, soc: float | None, battery_power: float | None) -> None:
         """Add the min SOC to a 1040 hold when the battery keeps delivering power.
@@ -826,13 +871,13 @@ class KostalData:
         if self.discharge_limit_guard_soc is None:
             return
         self.discharge_limit_guard_soc = None
-        await self.handler.write_float(REG_BATTERY_MIN_SOC, self.effective_min_soc())
+        await self.async_write_min_soc()
 
     async def async_release_discharge_hold(self) -> None:
         """End a discharge hold: restore 1040 and any guard on it, or hand 1042 back."""
         self.discharge_hold_min_soc = None
         if not self.hold_use_discharge_limit:
-            await self.handler.write_float(REG_BATTERY_MIN_SOC, self.effective_min_soc())
+            await self.async_write_min_soc()
             return
         try:
             await self.async_restore_discharge_limit()
@@ -1037,7 +1082,7 @@ async def _async_switch_hold_register(data: KostalData, used_limit: bool) -> Non
         if used_limit:
             await data.async_restore_discharge_limit()
         elif hold is not None:
-            await data.handler.write_float(REG_BATTERY_MIN_SOC, data.effective_min_soc())
+            await data.async_write_min_soc()
     except Exception as err:
         _LOGGER.warning("Discharge hold: could not move the hold to the selected register: %s", err)
 

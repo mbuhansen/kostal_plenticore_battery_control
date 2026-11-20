@@ -4,7 +4,12 @@ import logging
 from datetime import timedelta
 from typing import Any
 
-from homeassistant.components.number import NumberDeviceClass, NumberMode, RestoreNumber
+from homeassistant.components.number import (
+    NumberDeviceClass,
+    NumberExtraStoredData,
+    NumberMode,
+    RestoreNumber,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfPower
 from homeassistant.core import HomeAssistant, callback
@@ -292,11 +297,15 @@ class KostalSocLimitNumber(RestoreNumber):
     def _store_value(self, value: float) -> None:
         setattr(self._data, self._data_attr, value)
 
+    def _inactive_limit(self) -> float:
+        """The inverter's own limit: setting the number to it means "not in use"."""
+        return self._inactive_value
+
     def _is_active(self) -> bool:
         """False when the limit equals the inverter's own limit, i.e. unused."""
         if self._attr_native_value is None:
             return False
-        return abs(self._attr_native_value - self._inactive_value) >= 0.5
+        return abs(self._attr_native_value - self._inactive_limit()) >= 0.5
 
     @callback
     def _apply(self) -> None:
@@ -367,7 +376,14 @@ class KostalSocLimitNumber(RestoreNumber):
 
 
 class KostalMinSocLimitNumber(KostalSocLimitNumber):
-    """Minimum SOC. 5% means unused — that is the inverter's own minimum."""
+    """Minimum SOC. At or below the inverter's own minimum it is unused.
+
+    The inverter's own minimum is the one set in its web UI, which the inverter
+    may also raise by itself to protect the battery. It is read from 1042 while
+    nothing is written (KostalData.observe_inverter_min_soc) and is the lowest
+    value this number accepts. The value the user chose is kept as it is, so a
+    lower own minimum later on brings it back into use.
+    """
 
     _key = NUMBER_MIN_SOC_LIMIT
     _register = REG_BATTERY_MIN_SOC
@@ -377,6 +393,58 @@ class KostalMinSocLimitNumber(KostalSocLimitNumber):
     _attr_icon = "mdi:battery-arrow-down-outline"
     _attr_native_min_value = MIN_SOC_LIMIT_RANGE[0]
     _attr_native_max_value = MIN_SOC_LIMIT_RANGE[1]
+    _floor: float | None = None
+
+    @property
+    def native_min_value(self) -> float:
+        return self._data.min_soc_floor()
+
+    @property
+    def native_value(self) -> float | None:
+        if self._attr_native_value is None:
+            return None
+        return max(self._attr_native_value, self._data.min_soc_floor())
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {**super().extra_state_attributes, "inverter_min_soc": self._data.inverter_min_soc}
+
+    @property
+    def extra_restore_state_data(self) -> NumberExtraStoredData:
+        # Save the value the user chose, not the one shown: shown at a raised
+        # own minimum, it would stay in use once the own minimum drops again
+        return NumberExtraStoredData(
+            self.native_max_value,
+            self.native_min_value,
+            self.native_step,
+            self.native_unit_of_measurement,
+            self._attr_native_value,
+        )
+
+    def _inactive_limit(self) -> float:
+        return self._data.min_soc_floor()
+
+    def _is_active(self) -> bool:
+        if self._attr_native_value is None:
+            return False
+        return self._attr_native_value - self._data.min_soc_floor() >= 0.5
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self._floor = self._data.min_soc_floor()
+        coordinator = self._data.coordinator
+        if coordinator is not None:
+            self.async_on_remove(coordinator.async_add_listener(self._handle_floor_update))
+
+    @callback
+    def _handle_floor_update(self) -> None:
+        """Follow a change in the inverter's own minimum: start or stop writing, and show it."""
+        floor = self._data.min_soc_floor()
+        if floor == self._floor:
+            return
+        self._floor = floor
+        self._apply()
+        self.async_write_ha_state()
 
     def _register_value(self, value: float) -> float:
         # Block Discharge and Predbat's reserve hold write 1042 as well — send the
