@@ -143,6 +143,7 @@ from .const import (
     MIN_EXTERNAL_CONTROL_EMA_ALPHA,
 )
 from .modbus_handler import KostalModbusHandler, KostalModbusRequestError
+from .losses import LOSS_COUNTER_REGISTERS, LossTracker
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -377,6 +378,8 @@ class KostalCoordinator(DataUpdateCoordinator[dict[Any, Any]]):
                 REG_HOME_CONSUMPTION_TOTAL_WH,
                 REG_PV_ENERGY_TOTAL_WH,
                 REG_PV_POWER_W,
+                # Energy counters behind the loss sensors
+                *LOSS_COUNTER_REGISTERS,
             ):
                 data[address] = await self._read_optional(
                     address,
@@ -409,6 +412,7 @@ class KostalCoordinator(DataUpdateCoordinator[dict[Any, Any]]):
                 data[REG_SOFTWARE_VERSION] = await self._async_rest_software_version()
             self._kostal_data.update_observed_battery_current(data)
             self._kostal_data.observe_inverter_min_soc(data.get(REG_BATTERY_MIN_SOC))
+            self._kostal_data.update_losses(data)
             # KSEM energy registers (separate handler, optional)
             ksem = self._kostal_data.ksem_handler
             if ksem is not None:
@@ -484,6 +488,8 @@ class KostalData:
     battery_max_voltage_learned: float | None = None
     battery_max_voltage_learned_at: str | None = None
     store: Store | None = None
+    # Battery and inverter losses from the energy counters, kept in store
+    loss_tracker: LossTracker = field(default_factory=LossTracker)
     scaling_warnings_logged: set[str] = field(default_factory=set)
     # User setpoints from the SOC limit numbers. The defaults equal the
     # inverter's own limits, i.e. "not in use". The number entities own the
@@ -595,6 +601,7 @@ class KostalData:
             "battery_max_voltage_learned": self.battery_max_voltage_learned,
             "battery_max_voltage_learned_at": self.battery_max_voltage_learned_at,
             "inverter_min_soc": self.inverter_min_soc,
+            "losses": self.loss_tracker.as_dict(),
         }
 
     def load_storage_data(self, stored: dict[str, Any] | None) -> None:
@@ -606,6 +613,12 @@ class KostalData:
         self.battery_max_voltage_learned = stored.get("battery_max_voltage_learned")
         self.battery_max_voltage_learned_at = stored.get("battery_max_voltage_learned_at")
         self.inverter_min_soc = stored.get("inverter_min_soc")
+        self.loss_tracker.load(stored.get("losses"))
+
+    def update_losses(self, data: dict) -> None:
+        """Feed the loss tracker one poll; saved whenever it takes a snapshot."""
+        if self.loss_tracker.update(time.time(), data) and self.store is not None:
+            self.store.async_delay_save(self._storage_data, STORAGE_SAVE_DELAY_SECONDS)
 
     def observe_inverter_min_soc(self, value: float | None) -> bool:
         """Learn the inverter's own min SOC from 1042, once nothing has been written for a while.

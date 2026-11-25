@@ -57,6 +57,9 @@ from .const import (
     REG_GRID_ENERGY_EXPORTED_WH,
     REG_GRID_ENERGY_IMPORTED_WH,
     SENSOR_PV_POWER,
+    SENSOR_BATTERY_LOSS,
+    SENSOR_BATTERY_LOSS_DISCHARGE,
+    SENSOR_INVERTER_LOSS,
     SENSOR_HOME_POWER,
     SENSOR_HOME_CONSUMPTION_TOTAL,
     SENSOR_PV_ENERGY_TOTAL,
@@ -220,6 +223,10 @@ async def async_setup_entry(
         KostalBatteryCurrentSensor(coordinator, entry.entry_id),
         KostalBatteryMaxChargePowerLimitSensor(coordinator, entry.entry_id),
         KostalBatteryMaxDischargePowerLimitSensor(coordinator, entry.entry_id),
+        # Losses for Predbat, measured from the energy counters (diagnostic)
+        KostalBatteryLossSensor(coordinator, data, entry.entry_id),
+        KostalBatteryLossDischargeSensor(coordinator, data, entry.entry_id),
+        KostalInverterLossSensor(coordinator, data, entry.entry_id),
         # SOC limit sensors (diagnostic, disabled by default)
         KostalBatteryMinSoCSensor(coordinator, entry.entry_id),
         KostalBatteryMaxSoCSensor(coordinator, entry.entry_id),
@@ -976,6 +983,60 @@ class KostalGridEnergyExportedTotalSensor(KostalEnergyTotalSensor):
     _key = SENSOR_GRID_ENERGY_EXPORTED_TOTAL
     _name = "Grid Export Energy"
     _address = REG_GRID_ENERGY_EXPORTED_WH
+
+
+class KostalLossSensor(KostalBaseSensor):
+    """A loss as a fraction (0.04), the form Predbat's loss settings take.
+
+    Copy the value into Predbat's matching input_number by hand. The figures
+    and what they are based on come from the loss tracker — see losses.py.
+    """
+
+    _address = 0  # Not read directly — the value comes from the loss tracker
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 3
+
+    def __init__(self, coordinator: KostalCoordinator, data, entry_id: str) -> None:
+        super().__init__(coordinator, entry_id)
+        self._data = data
+
+
+class KostalBatteryLossSensor(KostalLossSensor):
+    """Battery charge loss: half the DC round trip, for Predbat's battery_loss."""
+
+    _key = SENSOR_BATTERY_LOSS
+    _name = "Battery Loss"
+
+    @property
+    def native_value(self):
+        return self._data.loss_tracker.battery_loss
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return self._data.loss_tracker.battery_attributes
+
+
+class KostalBatteryLossDischargeSensor(KostalBatteryLossSensor):
+    """Battery discharge loss, for Predbat's battery_loss_discharge — the same half of the round trip."""
+
+    _key = SENSOR_BATTERY_LOSS_DISCHARGE
+    _name = "Battery Loss Discharge"
+
+
+class KostalInverterLossSensor(KostalLossSensor):
+    """Inverter AC/DC loss measured at night, for Predbat's inverter_loss."""
+
+    _key = SENSOR_INVERTER_LOSS
+    _name = "Inverter Loss"
+
+    @property
+    def native_value(self):
+        return self._data.loss_tracker.inverter_loss
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return self._data.loss_tracker.inverter_attributes
 
 
 class KostalBatteryMgmtModeSensor(KostalBaseSensor):
