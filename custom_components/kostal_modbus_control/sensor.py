@@ -31,6 +31,7 @@ from .const import (
     DOMAIN,
     INVERTER_TYPE_BI,
     INVERTER_TYPE_HYBRID,
+    REG_INVERTER_MAX_POWER,
     REG_INVERTER_STATE,
     REG_TOTAL_ACTIVE_POWER,
     REG_VOLTAGE_PHASE1,
@@ -105,6 +106,7 @@ from .const import (
     SENSOR_BATTERY_MAX_CONTROL_POWER,
     SENSOR_BATTERY_MAX_CONTROL_POWER_SOURCE,
     SENSOR_BATTERY_MAX_VOLTAGE,
+    SENSOR_INVERTER_MAX_POWER,
     SENSOR_BATTERY_MAX_CHARGE_POWER_LIMIT,
     SENSOR_BATTERY_MAX_DISCHARGE_POWER_LIMIT,
     SENSOR_BATTERY_WORK_CAPACITY,
@@ -184,6 +186,7 @@ async def async_setup_entry(
         KostalBatteryMaxDischargeLimitSensor(coordinator, entry.entry_id),
         KostalBatteryMaxControlPowerSensor(coordinator, data, entry.entry_id),
         KostalBatteryMaxControlPowerSourceSensor(coordinator, data, entry.entry_id),
+        KostalInverterMaxPowerSensor(coordinator, data, entry.entry_id),
         KostalVoltagePhase1Sensor(coordinator, entry.entry_id),
         KostalVoltagePhase2Sensor(coordinator, entry.entry_id),
         KostalVoltagePhase3Sensor(coordinator, entry.entry_id),
@@ -392,6 +395,30 @@ class KostalBatteryMaxControlPowerSourceSensor(KostalBaseSensor):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return {"learned_at": self._data.battery_max_voltage_learned_at}
+
+
+class KostalInverterMaxPowerSensor(KostalBaseSensor):
+    """The inverter's own maximum AC power (register 531), read once at setup.
+
+    What sun and battery together can deliver on the AC side - energy managers (Predbat's inverter_limit,
+    Energy Pilot) cap the plan with it.
+    """
+
+    _key = SENSOR_INVERTER_MAX_POWER
+    _name = "Inverter Max Power"
+    _address = REG_INVERTER_MAX_POWER  # Read once at setup - native_value comes from the setup data
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: KostalCoordinator, data, entry_id: str) -> None:
+        super().__init__(coordinator, entry_id)
+        self._data = data
+
+    @property
+    def native_value(self):
+        max_power = self._data.inverter_max_power_w
+        return round(max_power) if max_power else None
 
 
 class KostalBatteryMaxVoltageSensor(KostalBaseSensor):
